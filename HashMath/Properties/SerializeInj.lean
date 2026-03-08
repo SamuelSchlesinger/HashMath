@@ -1,9 +1,10 @@
 /-
-  HashMath.Properties.SerializeInj — Serialization is injective
+  HashMath.Properties.SerializeInj — Serialization and Merkle hash injectivity
 
-  We prove that the serialize functions are injective, meaning
-  structurally different terms produce different byte representations.
-  Combined with SHA3 collision resistance, this gives hash injectivity.
+  We state injectivity theorems for the serialization functions and the
+  Merkle-tree hash functions. The key insight for Merkle hashing is that
+  child hashes are fixed-size (32 bytes), making the pre-image of each
+  node's hash unambiguous given tag uniqueness + collision resistance.
 -/
 
 import HashMath.Serialize
@@ -16,19 +17,12 @@ namespace HashMath
 -- 2. Hashes are fixed-length (32 bytes)
 -- 3. List lengths are encoded before elements
 -- 4. Recursive subexpressions are serialized in a deterministic order
-
--- Full formal proof of injectivity requires showing LEB128 is prefix-free
--- and that the recursive structure is unambiguous. We state the key theorems
--- and provide partial proofs.
+-- 5. `iref` has its own unique tag (0x18) and is unambiguous
 
 /-- LEB128 encoding is injective. -/
 theorem encodeLEB128_injective (n m : Nat) :
     encodeLEB128 n = encodeLEB128 m → n = m := by
   intro h
-  -- The proof proceeds by strong induction on max(n, m).
-  -- For n, m < 128: the single byte determines the value.
-  -- For n, m ≥ 128: the low 7 bits + high bit set determines n%128 = m%128,
-  -- and by IH on n/128, m/128 we get n/128 = m/128.
   sorry -- Full proof requires careful byte-level reasoning
 
 /-- Level serialization is injective. -/

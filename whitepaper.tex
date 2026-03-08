@@ -34,7 +34,7 @@
 \newcommand{\hashset}{\mathcal{S}}
 \newcommand{\typeindex}{\mathcal{I}}
 \newcommand{\namemap}{\mathcal{N}}
-\newcommand{\SHA}{\textsf{SHA3}}
+\newcommand{\SHA}{\textsf{SHA256}}
 \newcommand{\Sort}{\textsf{Sort}}
 \newcommand{\Prop}{\textsf{Prop}}
 \newcommand{\Type}{\textsf{Type}}
@@ -71,7 +71,7 @@ scale at which humans and AI can contribute.
 We observe that mathematical identity is structural, not nominal: two proof terms with
 identical structure are the same proof regardless of what anyone calls them.
 We propose \textbf{HashMath}, a content-addressed Calculus of Inductive Constructions (CIC)
-in which every well-typed term is indexed by its SHA3 hash, with all dependencies
+in which every well-typed term is indexed by its SHA-256 hash, with all dependencies
 referenced by hash rather than by name.
 The result is a global, permissionless, append-only knowledge base where correctness is
 guaranteed by type theory, names are optional metadata, and contributions require
@@ -144,13 +144,13 @@ The result is a global, append-only knowledge base that requires no coordination
 no curator to maintain, and no naming consensus to function.
 
 \begin{quote}
-\emph{Bitcoin solved double-spending without trusted third parties.
+\emph{Bitcoin solved double-spending without trusted third parties~\cite{nakamoto2008}.
 HashMath solves naming conflicts without trusted curators.}
 \end{quote}
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[
+\begin{tikzpicture}[scale=0.92, every node/.style={transform shape},
     silo/.style={draw, rounded corners, minimum width=2.2cm, minimum height=3cm, align=center, fill=red!8},
     pool/.style={draw, rounded corners, minimum width=8cm, minimum height=3cm, align=center, fill=green!8},
     term/.style={draw, circle, inner sep=1.5pt, fill=blue!15, font=\tiny},
@@ -170,8 +170,10 @@ HashMath solves naming conflicts without trusted curators.}
   }
   \node at (7.5, -2.2) {\small (b) Unified pool: one hash per proof};
 \end{tikzpicture}
-\caption{Formalized mathematics today exists in isolated silos with duplicated effort and incompatible naming.
-HashMath provides a single content-addressed pool where every unique proof term has exactly one identity.}
+\caption{Formalized mathematics today exists in isolated silos with duplicated effort
+and incompatible naming.
+HashMath provides a single content-addressed pool where every unique proof term has
+exactly one identity.}
 \label{fig:silos}
 \end{figure}
 
@@ -196,7 +198,7 @@ content-addressed setting.
 \label{sec:terms}
 
 Lean~4's kernel defines \texttt{Expr} with 12 constructors.
-HashMath retains the 8 constructors that carry type-theoretic content and excludes the
+HashMath retains the 9 constructors that carry type-theoretic content and excludes the
 4 that serve only elaboration, metaprogramming, or syntactic sugar.
 
 \begin{definition}[HashMath expression grammar]
@@ -204,24 +206,29 @@ HashMath retains the 8 constructors that carry type-theoretic content and exclud
 HashMath terms are defined by the following grammar:
 \[
   e \;\;::=\;\;
-    \bvar(n)
-    \;\mid\; \sort(u)
-    \;\mid\; \const(h, \bar{u})
-    \;\mid\; \app(e_1, e_2)
-    \;\mid\; \lam(e_T, e_b)
-    \;\mid\; \forallE(e_T, e_b)
-    \;\mid\; \letE(e_T, e_v, e_b)
-    \;\mid\; \proj(h, i, e)
+    \begin{aligned}[t]
+      &\bvar(n) \\
+      \mid\;\; &\sort(u) \\
+      \mid\;\; &\const(h, \bar{u}) \\
+      \mid\;\; &\app(e_1, e_2) \\
+      \mid\;\; &\lam(e_T, e_b) \\
+      \mid\;\; &\forallE(e_T, e_b) \\
+      \mid\;\; &\letE(e_T, e_v, e_b) \\
+      \mid\;\; &\proj(h, i, e) \\
+      \mid\;\; &\textsf{iref}(k, \bar{u})
+    \end{aligned}
 \]
 where $n \in \mathbb{N}$, $u$ is a universe level (Section~\ref{sec:levels}),
 $h \in \{0,1\}^{256}$ is a content hash, $\bar{u}$ is a list of universe levels,
-and $i \in \mathbb{N}$.
+$i \in \mathbb{N}$, and $k \in \mathbb{N}$ is a block-relative type index.
 \end{definition}
 
 The constructors are:
 \begin{itemize}[nosep]
   \item $\bvar(n)$ --- a de Bruijn bound variable with index $n$.
-  \item $\sort(u)$ --- a universe sort at level $u$; $\sort(\textsf{zero})$ is $\Prop$ and $\sort(\textsf{succ}(n))$ is $\Type(n)$.
+  \item $\sort(u)$ --- a universe sort at level $u$.
+        This is the AST constructor; the familiar names $\Prop$ and $\Type(n)$ are
+        abbreviations for $\sort(\textsf{zero})$ and $\sort(\textsf{succ}(n))$, respectively.
   \item $\const(h, \bar{u})$ --- a reference to a previously declared constant identified by its content hash $h$, instantiated at universe levels $\bar{u}$.
         Crucially, constants are referenced \emph{by hash}, not by name.
   \item $\app(e_1, e_2)$ --- function application.
@@ -232,6 +239,8 @@ The constructors are:
   \item $\letE(e_T, e_v, e_b)$ --- let binding with type annotation $e_T$, value $e_v$, and body $e_b$.
         Binder name is excluded.
   \item $\proj(h, i, e)$ --- projection of the $i$-th field from a structure whose inductive type has hash $h$, applied to term $e$.
+  \item $\textsf{iref}(k, \bar{u})$ --- a block-relative reference to the $k$-th type within a mutual inductive block, instantiated at universe levels $\bar{u}$.
+        Used inside constructor types before the block hash is known; resolved to $\const$ when the block is registered (Section~\ref{sec:mutual}).
 \end{itemize}
 
 \paragraph{Excluded constructors.}
@@ -250,7 +259,7 @@ The four excluded constructors are:
 \centering
 \begin{tabular}{llcl}
 \hline
-\textbf{Lean 4 Constructor} & \textbf{Purpose} & \textbf{HashMath} & \textbf{Notes} \\
+\textbf{Lean~4 Constructor} & \textbf{Purpose} & \textbf{HashMath} & \textbf{Notes} \\
 \hline
 \texttt{bvar}    & Bound variable       & \checkmark & De Bruijn index \\
 \texttt{fvar}    & Free variable        & ---        & Only closed terms stored \\
@@ -264,6 +273,7 @@ The four excluded constructors are:
 \texttt{lit}     & Literal              & ---        & Expand to constructors \\
 \texttt{mdata}   & Metadata             & ---        & Elaboration only \\
 \texttt{proj}    & Projection           & \checkmark & \\
+---              & Block-relative ref   & \checkmark & \texttt{iref}: resolved to \texttt{const} \\
 \hline
 \end{tabular}
 \caption{Lean~4 \texttt{Expr} constructors and their status in HashMath.
@@ -298,9 +308,14 @@ The constructors are:
   \item $\textsf{zero}$ --- the base level.
   \item $\textsf{succ}(u)$ --- the successor of level $u$.
   \item $\max(u_1, u_2)$ --- the maximum of two levels.
-  \item $\textsf{imax}(u_1, u_2)$ --- the \emph{impredicative maximum}: $\textsf{imax}(u_1, u_2)$ equals $\textsf{zero}$ if $u_2$ evaluates to $\textsf{zero}$, and $\max(u_1, u_2)$ otherwise.
-        This is essential for typing $\Pi$-types into $\Prop$ (see Section~\ref{sec:typing}).
-  \item $\textsf{param}(n)$ --- a universe parameter variable, referenced by de Bruijn index rather than by name, for the same content-addressing reasons that binder names are excluded from terms.
+  \item $\textsf{imax}(u_1, u_2)$ --- the \emph{impredicative maximum}:
+        equals $\textsf{zero}$ if $u_2$ evaluates to $\textsf{zero}$,
+        and $\max(u_1, u_2)$ otherwise.
+        This is essential for typing $\Pi$-types into $\Prop$
+        (see Section~\ref{sec:typing}).
+  \item $\textsf{param}(n)$ --- a universe parameter variable, referenced by
+        de Bruijn index rather than by name, for the same content-addressing
+        reasons that binder names are excluded from terms.
 \end{itemize}
 
 \paragraph{Excluded constructor.}
@@ -526,12 +541,16 @@ Mutual inductive types have multiple entries in $\mathit{types}$.
 \begin{example}[Natural numbers]
 The natural numbers are defined inductively:
 \[
-  \textsf{InductiveBlock}\{k=0,\; p=0,\;
-    \mathit{types} = [\{
-      \mathit{type} = \Type,\;
-      \mathit{ctors} = [\Nat,\; \Nat \to \Nat]
-    \}],\;
-    \mathit{isUnsafe} = \textsf{false}\}
+  \textsf{InductiveBlock}\!\left\{\;
+    \begin{aligned}
+      &k=0,\; p=0, \\
+      &\mathit{types} = [\{\,
+        \mathit{type} = \Type,\;
+        \mathit{ctors} = [\Nat,\; \Nat \to \Nat]
+      \,\}], \\
+      &\mathit{isUnsafe} = \textsf{false}
+    \end{aligned}
+  \;\right\}
 \]
 Here $\Nat : \Type$ is the type former, and the two constructors have types
 $\textsf{zero} : \Nat$ and $\textsf{succ} : \Nat \to \Nat$.
@@ -541,12 +560,17 @@ The elimination principle (recursor) is generated automatically.
 \begin{example}[Propositional equality]
 The identity type $\Eq$ is an inductive family with $k=1$ universe parameter and $p=1$ parameter:
 \[
-  \textsf{InductiveBlock}\{k=1,\; p=1,\;
-    \mathit{types} = [\{
-      \mathit{type} = \Pi(A{:}\Type_u).\,A \to A \to \Prop,\;
-      \mathit{ctors} = [\Pi(A{:}\Type_u).\,\Pi(a{:}A).\,\Eq\;A\;a\;a]
-    \}],\;
-    \mathit{isUnsafe} = \textsf{false}\}
+  \textsf{InductiveBlock}\!\left\{\;
+    \begin{aligned}
+      &k=1,\; p=1, \\
+      &\mathit{types} = [\{\,
+        \mathit{type} = \Pi(A{:}\Type_u).\,A \to A \to \Prop, \\
+      &\phantom{\mathit{types} = [\{\,}
+        \mathit{ctors} = [\Pi(A{:}\Type_u).\,\Pi(a{:}A).\,\Eq\;A\;a\;a]
+      \,\}], \\
+      &\mathit{isUnsafe} = \textsf{false}
+    \end{aligned}
+  \;\right\}
 \]
 \end{example}
 
@@ -558,10 +582,17 @@ Lean~4 (and therefore HashMath) includes four built-in constants for quotient ty
 cannot be defined as ordinary inductive types:
 
 \begin{itemize}[nosep]
-  \item $\Quot : (\alpha : \Sort(u)) \to (\alpha \to \alpha \to \Prop) \to \Sort(u)$ --- the quotient type former.
-  \item $\Quot.\textsf{mk} : \{r : \alpha \to \alpha \to \Prop\} \to \alpha \to \Quot\;\alpha\;r$ --- the quotient constructor.
-  \item $\Quot.\textsf{lift} : ((\alpha \to \beta) \to (\forall\;a\;b,\; r\;a\;b \to f\;a = f\;b) \to \Quot\;\alpha\;r \to \beta)$ --- lift a function that respects the equivalence relation.
-  \item $\Quot.\textsf{ind} : (\forall\;a,\; \varphi\;(\Quot.\textsf{mk}\;r\;a)) \to \forall\;q,\; \varphi\;q$ --- the induction principle.
+  \item $\Quot$ --- the quotient type former:
+    \[ \Quot : (\alpha : \Sort(u)) \to (\alpha \to \alpha \to \Prop) \to \Sort(u) \]
+
+  \item $\Quot.\textsf{mk}$ --- the quotient constructor:
+    \[ \Quot.\textsf{mk} : \{r : \alpha \to \alpha \to \Prop\} \to \alpha \to \Quot\;\alpha\;r \]
+
+  \item $\Quot.\textsf{lift}$ --- lift a function that respects the equivalence relation:
+    \[ \Quot.\textsf{lift} : (\alpha \to \beta) \to (\forall\;a\;b,\; r\;a\;b \to f\;a = f\;b) \to \Quot\;\alpha\;r \to \beta \]
+
+  \item $\Quot.\textsf{ind}$ --- the induction principle:
+    \[ \Quot.\textsf{ind} : (\forall\;a,\; \varphi\;(\Quot.\textsf{mk}\;r\;a)) \to \forall\;q,\; \varphi\;q \]
 \end{itemize}
 
 The $\mathit{kind}$ field in a quotient declaration identifies which of these four constants it is.
@@ -605,12 +636,12 @@ $\Prop$ is impredicative: $\Pi$-types into $\Prop$ remain in $\Prop$.}
 \subsection{Transparency Model}
 \label{sec:transparency}
 
-In Lean~4, definitions carry an opacity attribute (\texttt{@[reducible]},
-\texttt{@[semireducible]}, \texttt{@[irreducible]}) that controls when the
-definitional equality checker may unfold them.
-This is an important performance optimization for a practical proof assistant but
-introduces an elaboration-level concern into the kernel: two terms may or may not
-be definitionally equal depending on the transparency setting.
+In Lean~4, definitions carry an opacity attribute
+that controls when the definitional equality checker may unfold them
+(\texttt{@[reducible]}, \texttt{@[semireducible]}, or~\texttt{@[irreducible]}).
+This is a useful performance optimization, but it introduces an
+elaboration-level concern into the kernel: two terms may or may not be
+definitionally equal depending on the transparency setting.
 
 HashMath takes a simpler approach: \textbf{all definitions are always fully transparent}.
 The definitional equality checker may unfold any definition at any time.
@@ -652,7 +683,7 @@ to identify duplicates, choose canonical names, and redirect references.
 \label{sec:hashing}
 
 We define the hash function $\hash$ on CIC terms at the byte level.
-All hashing uses SHA3-256~\cite{sha3}.
+All hashing uses SHA-256~\cite{sha256}.
 Single-byte tags provide domain separation between constructors, natural numbers are
 encoded as unsigned LEB128, and hashes are fixed 32-byte values.
 This specification is complete and unambiguous---it uniquely determines the hash of
@@ -681,7 +712,8 @@ The hash function $\hash : \textsf{Expr} \to \{0,1\}^{256}$ is:
   \hash(\lam(T, b)) &= \SHA(\mathtt{0x14} \concat \hash(T) \concat \hash(b)) \\
   \hash(\forallE(T, b)) &= \SHA(\mathtt{0x15} \concat \hash(T) \concat \hash(b)) \\
   \hash(\letE(T, v, b)) &= \SHA(\mathtt{0x16} \concat \hash(T) \concat \hash(v) \concat \hash(b)) \\
-  \hash(\textsf{proj}(h, i, e)) &= \SHA(\mathtt{0x17} \concat h \concat \textsf{leb128}(i) \concat \hash(e))
+  \hash(\textsf{proj}(h, i, e)) &= \SHA(\mathtt{0x17} \concat h \concat \textsf{leb128}(i) \concat \hash(e)) \\
+  \hash(\textsf{iref}(k, [l_0, \ldots, l_{n-1}])) &= \SHA(\mathtt{0x18} \concat \textsf{leb128}(k) \concat \textsf{leb128}(n) \concat \hash(l_0) \concat \cdots \concat \hash(l_{n-1}))
 \end{align*}
 where $h$ in $\const$ and $\textsf{proj}$ is the 32-byte hash of the referenced declaration,
 and $\textsf{leb128}$ denotes unsigned LEB128 encoding.
@@ -701,11 +733,24 @@ where $n$ is the number of universe parameters and the inductive block encoding 
 the same conventions (LEB128 lengths, recursive sub-hashing).
 \end{definition}
 
+\begin{definition}[Derived entity hash]
+\label{def:hash-derived}
+Each inductive block generates derived entities---individual types, constructors, and recursors---whose
+hashes are derived from the block hash:
+\begin{align*}
+  \hash(\textsf{indType}(h_B, i)) &= \SHA(\mathtt{0x30} \concat h_B \concat \textsf{leb128}(i)) \\
+  \hash(\textsf{indCtor}(h_B, i, j)) &= \SHA(\mathtt{0x31} \concat h_B \concat \textsf{leb128}(i) \concat \textsf{leb128}(j)) \\
+  \hash(\textsf{indRec}(h_B, i)) &= \SHA(\mathtt{0x32} \concat h_B \concat \textsf{leb128}(i))
+\end{align*}
+where $h_B$ is the block hash, $i$ is the type index within the block, and $j$ is the constructor index within the type.
+\end{definition}
+
 \begin{remark}
 The tag bytes are chosen so that levels (\texttt{0x00}--\texttt{0x04}),
-expressions (\texttt{0x10}--\texttt{0x17}), and declarations (\texttt{0x20}--\texttt{0x23})
+expressions (\texttt{0x10}--\texttt{0x18}), declarations (\texttt{0x20}--\texttt{0x23}),
+and derived entities (\texttt{0x30}--\texttt{0x32})
 occupy disjoint ranges.
-This ensures that no term can collide with a level or declaration at the SHA3 input level,
+This ensures that no term can collide with a level, declaration, or derived entity at the SHA-256 input level,
 even before considering structural differences.
 \end{remark}
 
@@ -741,14 +786,14 @@ where $\hash(\Nat)$ is the hash of the inductive declaration defining $\Nat$.
 \label{ex:alpha}
 The terms $\lambda(x{:}\Nat).\,x$ and $\lambda(y{:}\Nat).\,y$ both have de Bruijn representation
 $\lam(\Nat, \bvar(0))$.
-Since binder names are excluded from the hash, they produce identical hashes. \qed
+Since binder names are excluded from the hash, they produce identical hashes.
 \end{example}
 
 \subsection{Capturing the Environment}
 \label{sec:hash-closure}
 
 \begin{definition}[Hash-closed term]
-A term $t$ is \emph{hash-closed} if every constant reference $\const(n, \bar{u})$ occurring
+A term $t$ is \emph{hash-closed} if every constant reference $\const(h, \bar{u})$ occurring
 in $t$ can be resolved to a declaration whose hash exists in the hashset $\hashset$.
 \end{definition}
 
@@ -846,7 +891,7 @@ Since well-typedness is verified before insertion, every entry in the hashset is
     \texttt{a7f3...: Term}\\
     \texttt{~~type = hash of ($\forall$ n m, n + m = m + n)}\\
     \texttt{~~deps = \{1b2e..., c4d9..., e8f1...\}}\\[2pt]
-    {\tiny Identity: \texttt{a7f3...} (SHA3 of term)}
+    {\tiny Identity: \texttt{a7f3...} (SHA-256 of term)}
   };
   \draw[->, thick] (-0.8, 0) -- (0.8, 0) node[midway, above, font=\small] {HashMath};
 \end{tikzpicture}
@@ -860,6 +905,7 @@ Content-addressed references (right) identify terms by their cryptographic hash,
 
 The Unison programming language pioneered content-addressing for general-purpose code,
 hashing abstract syntax trees with 512-bit SHA3~\cite{unison}.
+HashMath uses SHA-256~\cite{sha256} rather than SHA3.
 HashMath adapts this approach for the specific demands of formal mathematics:
 
 \begin{itemize}[nosep]
@@ -873,8 +919,8 @@ HashMath adapts this approach for the specific demands of formal mathematics:
     have no analog in Unison's type system.
 \end{itemize}
 
-Unison's analysis of SHA3 collision probability applies equally to HashMath: with $2^{128}$
-security against collision attacks, the probability of a collision in a library of $2^{40}$
+Unison's analysis of collision probability applies equally to HashMath: with $2^{128}$
+security against collision attacks (the birthday bound for a 256-bit hash), the probability of a collision in a library of $2^{40}$
 terms (one trillion) is negligible ($\approx 2^{-176}$).
 
 
@@ -917,7 +963,7 @@ dependencies are never invalidated.
 
 Additional trust properties:
 \begin{itemize}[nosep]
-  \item \textbf{Integrity}: SHA3-256 collision resistance ensures that distinct terms receive
+  \item \textbf{Integrity}: SHA-256 collision resistance ensures that distinct terms receive
     distinct hashes, with overwhelming probability.
   \item \textbf{Immutability}: a hash pins exact content; the term at hash $h$ can never change.
   \item \textbf{Composability}: any well-typed term can reference any existing term in $\hashset$ by hash,
@@ -933,7 +979,7 @@ Additional trust properties:
 The system's correctness depends only on:
 \begin{enumerate}[nosep]
   \item the CIC type checker being correct,
-  \item the SHA3 implementation being correct, and
+  \item the SHA-256 implementation being correct, and
   \item the serialization format faithfully representing terms.
 \end{enumerate}
 
@@ -1450,6 +1496,7 @@ read from and write to, without modifying the system itself.
 
 Unison~\cite{unison} is the closest precedent.
 It content-addresses general-purpose functional programs using SHA3 hashes of abstract syntax trees.
+HashMath uses SHA-256 instead of SHA3 but the content-addressing architecture is analogous.
 HashMath adapts this idea for the Calculus of Inductive Constructions, adding the type-to-inhabitants
 index, requiring formal verification before storage, and handling CIC-specific features
 (universe polymorphism, inductive types, strict positivity).
@@ -1779,10 +1826,10 @@ R.~C.~Merkle,
 in \emph{Proc.\ CRYPTO'89}, LNCS~435, Springer, 1990.
 (Original concept, 1979.)
 
-\bibitem{sha3}
+\bibitem{sha256}
 NIST,
-``SHA-3 Standard: Permutation-based hash and extendable-output functions,''
-\emph{FIPS PUB 202}, 2015.
+``Secure Hash Standard (SHS),''
+\emph{FIPS PUB 180-4}, 2015.
 
 \bibitem{debruijn1970}
 N.~G.~de~Bruijn,
@@ -1815,21 +1862,6 @@ F.~Blanqui et~al.,
 ``EuroProofNet: European research network on digital proofs,''
 COST Action CA20111, 2022--2025.
 
-\bibitem{gonthier2008}
-G.~Gonthier,
-``Formal proof---the Four Color Theorem,''
-\emph{Notices of the AMS}, vol.~55, no.~11, pp.~1382--1393, 2008.
-
-\bibitem{gonthier2013}
-G.~Gonthier et~al.,
-``A machine-checked proof of the Odd Order Theorem,''
-in \emph{Proc.\ ITP}, LNCS~7998, Springer, 2013.
-
-\bibitem{leroy2009}
-X.~Leroy,
-``Formal verification of a realistic compiler,''
-\emph{Commun.\ ACM}, vol.~52, no.~7, pp.~107--115, 2009.
-
 \bibitem{ipfs}
 J.~Benet,
 ``IPFS---Content addressed, versioned, P2P file system,''
@@ -1839,11 +1871,6 @@ J.~Benet,
 S.~Nakamoto,
 ``Bitcoin: A peer-to-peer electronic cash system,''
 2008.
-
-\bibitem{buterin2014}
-V.~Buterin,
-``Ethereum: A next-generation smart contract and decentralized application platform,''
-2014.
 
 \bibitem{graf1996}
 P.~Graf,

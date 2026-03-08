@@ -24,12 +24,18 @@ namespace Tag
   def exprForallE : UInt8 := 0x15
   def exprLetE    : UInt8 := 0x16
   def exprProj    : UInt8 := 0x17
+  def exprIRef    : UInt8 := 0x18
 
   -- Decl tags
   def declAxiom      : UInt8 := 0x20
   def declDefinition : UInt8 := 0x21
   def declInductive  : UInt8 := 0x22
   def declQuotient   : UInt8 := 0x23
+
+  -- Derived entity tags (for Merkle hashing of inductive sub-entities)
+  def indType   : UInt8 := 0x30
+  def indCtor   : UInt8 := 0x31
+  def indRec    : UInt8 := 0x32
 end Tag
 
 /-- Serialize a single byte. -/
@@ -65,6 +71,9 @@ def serializeExpr : Expr → ByteArray
   | .letE ty val body =>
     serByte Tag.exprLetE ++ serializeExpr ty ++ serializeExpr val ++ serializeExpr body
   | .proj h i s => serByte Tag.exprProj ++ serHash h ++ serNat i ++ serializeExpr s
+  | .iref idx ls =>
+    serByte Tag.exprIRef ++ serNat idx ++ serNat ls.length ++
+    ByteArray.concatList (ls.map serializeLevel)
 
 /-- Serialize a QuotKind to a single byte. -/
 def serializeQuotKind : QuotKind → UInt8

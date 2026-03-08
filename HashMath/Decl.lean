@@ -44,7 +44,12 @@ def numUnivParams : Decl → Nat
   | .axiom n _ => n
   | .definition n _ _ => n
   | .inductive block => block.numUnivParams
-  | .quotient _ => 1  -- quotient constants have 1 universe param
+  | .quotient kind =>
+    match kind with
+    | .quot => 1
+    | .quotMk => 1
+    | .quotLift => 2
+    | .quotInd => 1
 
 def type? : Decl → Option Expr
   | .axiom _ ty => some ty
@@ -61,6 +66,7 @@ structure ConstructorInfo where
   cIdx : Nat          -- which constructor of that type
   nParams : Nat
   nFields : Nat
+  recursiveFields : List (Nat × Nat)  -- (fieldIdx, targetTypeIdx) pairs for recursive fields
   ty : Expr
   deriving Repr
 
@@ -73,6 +79,7 @@ structure RecursorInfo where
   nMinors : Nat
   nIndices : Nat
   recTy : Expr
+  allowsLargeElim : Bool := true  -- default to true for backward compat
   deriving Repr
 
 end HashMath

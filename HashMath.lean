@@ -3,11 +3,12 @@ import HashMath.Level
 import HashMath.Expr
 import HashMath.Decl
 import HashMath.Serialize
+import HashMath.SHA256
 import HashMath.Hash
+import HashMath.Quotient
 import HashMath.Environment
 import HashMath.Reduce
 import HashMath.Inductive
-import HashMath.Quotient
 import HashMath.DefEq
 import HashMath.TypeChecker
 import HashMath.Properties.SerializeInj

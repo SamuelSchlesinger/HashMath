@@ -6,8 +6,11 @@ import HashMath.Level
 
 namespace HashMath
 
-/-- Expressions with 8 constructors using de Bruijn indices.
-    Binder names and binder info are excluded (alpha-invariant). -/
+/-- Expressions with 9 constructors using de Bruijn indices.
+    Binder names and binder info are excluded (alpha-invariant).
+    `iref` is a block-relative inductive self-reference used inside
+    constructor types before the block hash is known. It is resolved
+    to `const` when the inductive block is added to the environment. -/
 inductive Expr where
   | bvar   : Nat → Expr
   | sort   : Level → Expr
@@ -17,6 +20,7 @@ inductive Expr where
   | forallE : (ty : Expr) → (body : Expr) → Expr
   | letE   : (ty : Expr) → (value : Expr) → (body : Expr) → Expr
   | proj   : (typeName : Hash) → (idx : Nat) → (struct : Expr) → Expr
+  | iref   : (typeIdx : Nat) → (univs : List Level) → Expr
   deriving Repr, BEq, Inhabited
 
 namespace Expr
@@ -32,6 +36,7 @@ def liftN (e : Expr) (n : Nat) (cutoff : Nat := 0) : Expr :=
   | .forallE ty body => .forallE (ty.liftN n cutoff) (body.liftN n (cutoff + 1))
   | .letE ty val body => .letE (ty.liftN n cutoff) (val.liftN n cutoff) (body.liftN n (cutoff + 1))
   | .proj h i s => .proj h i (s.liftN n cutoff)
+  | .iref idx ls => .iref idx ls
 
 /-- Substitute expression `s` for de Bruijn variable `var` in `e`.
     After substitution, free variables above `var` are decremented. -/
@@ -48,6 +53,7 @@ def substN (e : Expr) (var : Nat) (s : Expr) : Expr :=
   | .forallE ty body => .forallE (ty.substN var s) (body.substN (var + 1) (s.liftN 1))
   | .letE ty val body => .letE (ty.substN var s) (val.substN var s) (body.substN (var + 1) (s.liftN 1))
   | .proj h i struct => .proj h i (struct.substN var s)
+  | .iref idx ls => .iref idx ls
 
 /-- Instantiate the outermost bound variable (bvar 0) with `s`. -/
 def instantiate (e : Expr) (s : Expr) : Expr :=
@@ -77,6 +83,7 @@ where
     | .forallE ty body => .forallE (go ty target depth) (go body target (depth + 1))
     | .letE ty val body => .letE (go ty target depth) (go val target depth) (go body target (depth + 1))
     | .proj h i s => .proj h i (go s target depth)
+    | .iref idx ls => .iref idx ls
 
 /-- Substitute universe level parameters in an expression. -/
 def substLevelParams (e : Expr) (ls : List Level) : Expr :=
@@ -89,6 +96,7 @@ def substLevelParams (e : Expr) (ls : List Level) : Expr :=
   | .forallE ty body => .forallE (ty.substLevelParams ls) (body.substLevelParams ls)
   | .letE ty val body => .letE (ty.substLevelParams ls) (val.substLevelParams ls) (body.substLevelParams ls)
   | .proj h i s => .proj h i (s.substLevelParams ls)
+  | .iref idx lvls => .iref idx (lvls.map (Level.substParams ls))
 
 /-- Check if the expression has any loose bound variables ≥ depth. -/
 def hasLooseBVarGe (e : Expr) (depth : Nat) : Bool :=
@@ -101,6 +109,7 @@ def hasLooseBVarGe (e : Expr) (depth : Nat) : Bool :=
   | .forallE ty body => ty.hasLooseBVarGe depth || body.hasLooseBVarGe (depth + 1)
   | .letE ty val body => ty.hasLooseBVarGe depth || val.hasLooseBVarGe depth || body.hasLooseBVarGe (depth + 1)
   | .proj _ _ s => s.hasLooseBVarGe depth
+  | .iref _ _ => false
 
 /-- Check if the expression is closed (no loose bound variables). -/
 def isClosed (e : Expr) : Bool :=
@@ -112,9 +121,12 @@ def getAppFn : Expr → Expr
   | e => e
 
 /-- Get the arguments of an application spine. `(f a b c).getAppArgs = [a, b, c]`. -/
-def getAppArgs : Expr → List Expr
-  | .app f a => f.getAppArgs ++ [a]
-  | _ => []
+def getAppArgs (e : Expr) : List Expr :=
+  go e []
+where
+  go : Expr → List Expr → List Expr
+    | .app f a, acc => go f (a :: acc)
+    | _, acc => acc
 
 /-- Decompose an application into head and args. -/
 def getAppFnArgs (e : Expr) : Expr × List Expr :=

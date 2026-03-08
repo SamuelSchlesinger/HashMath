@@ -16,26 +16,116 @@ structure DeclInfo where
 /-- The HashMath environment: a map from hashes to declarations. -/
 structure Environment where
   decls : Std.HashMap Hash DeclInfo := {}
+  ctors : Std.HashMap Hash ConstructorInfo := {}
+  recs : Std.HashMap Hash RecursorInfo := {}
+  indTypes : Std.HashMap Hash (InductiveBlock × Nat) := {}  -- type hash → (block, typeIdx)
   deriving Inhabited
 
 namespace Environment
 
 /-- The empty environment. -/
-def empty : Environment := ⟨{}⟩
+def empty : Environment := ⟨{}, {}, {}, {}⟩
 
 /-- Look up a declaration by its hash. -/
 def lookup (env : Environment) (h : Hash) : Option DeclInfo :=
   env.decls[h]?
 
+/-- Look up constructor info by hash. -/
+def getConstructorInfo (env : Environment) (h : Hash) : Option ConstructorInfo :=
+  env.ctors[h]?
+
+/-- Look up recursor info by hash. -/
+def getRecursorInfo (env : Environment) (h : Hash) : Option RecursorInfo :=
+  env.recs[h]?
+
+/-- Look up the inductive block and type index for an inductive type hash. -/
+def getInductiveBlockForType (env : Environment) (h : Hash) : Option (InductiveBlock × Nat) :=
+  env.indTypes[h]?
+
+/-- Resolve `iref` references in an expression: replace `iref i univs` with
+    `const (hashIndType blockHash i) univs`. -/
+def resolveIRef (blockHash : Hash) (e : Expr) : Expr :=
+  match e with
+  | .iref idx ls => .const (hashIndType blockHash idx) ls
+  | .bvar i => .bvar i
+  | .sort l => .sort l
+  | .const h ls => .const h ls
+  | .app f a => .app (resolveIRef blockHash f) (resolveIRef blockHash a)
+  | .lam ty body => .lam (resolveIRef blockHash ty) (resolveIRef blockHash body)
+  | .forallE ty body => .forallE (resolveIRef blockHash ty) (resolveIRef blockHash body)
+  | .letE ty val body => .letE (resolveIRef blockHash ty) (resolveIRef blockHash val) (resolveIRef blockHash body)
+  | .proj h i s => .proj h i (resolveIRef blockHash s)
+
+/-- Walk a raw (pre-resolution) constructor type, skip `numParams` leading forallE binders,
+    then for each remaining forallE check if its domain's head is an `iref`. Returns
+    (fieldIdx, targetTypeIdx) pairs for recursive fields. -/
+private def computeRecursiveFields (rawCtorTy : Expr) (numParams : Nat) : List (Nat × Nat) :=
+  go (stripN rawCtorTy numParams) 0
+where
+  stripN : Expr → Nat → Expr
+    | .forallE _ body, n + 1 => stripN body n
+    | e, _ => e
+  go : Expr → Nat → List (Nat × Nat)
+    | .forallE domTy body, idx =>
+      match domTy.getAppFn with
+      | .iref targetIdx _ => (idx, targetIdx) :: go body (idx + 1)
+      | _ => go body (idx + 1)
+    | _, _ => []
+
 /-- Add a declaration to the environment. Returns the hash and updated environment. -/
 def addDecl (env : Environment) (d : Decl) : Hash × Environment :=
   let h := hashDecl d
   let info : DeclInfo := { decl := d, hash := h }
-  (h, { decls := env.decls.insert h info })
+  let env' := { env with decls := env.decls.insert h info }
+  match d with
+  | .inductive block => (h, registerInductive env' h block)
+  | _ => (h, env')
+where
+  registerInductive (env : Environment) (blockHash : Hash) (block : InductiveBlock) : Environment :=
+    (List.range block.types.length).foldl (fun env i =>
+      let typeHash := hashIndType blockHash i
+      let env := { env with indTypes := env.indTypes.insert typeHash (block, i) }
+      match block.types[i]? with
+      | some indTy =>
+        let env := (List.range indTy.ctors.length).foldl (fun env j =>
+          let ctorHash := hashCtor blockHash i j
+          let rawCtorTy := match indTy.ctors[j]? with | some ty => ty | none => .sort .zero
+          let ctorTy := resolveIRef blockHash rawCtorTy
+          let nFields := countForallE ctorTy - block.numParams
+          let recFields := computeRecursiveFields rawCtorTy block.numParams
+          let ctorInfo : ConstructorInfo := {
+            indHash := typeHash
+            blkIdx := i
+            cIdx := j
+            nParams := block.numParams
+            nFields := nFields
+            recursiveFields := recFields
+            ty := ctorTy
+          }
+          { env with ctors := env.ctors.insert ctorHash ctorInfo }
+        ) env
+        let recHash := hashRec blockHash i
+        let nIndices := countForallE indTy.type - block.numParams
+        let recInfo : RecursorInfo := {
+          indHash := typeHash
+          blkIdx := i
+          nParams := block.numParams
+          nMotives := 1
+          nMinors := indTy.ctors.length
+          nIndices := nIndices
+          recTy := .sort .zero  -- placeholder
+        }
+        { env with recs := env.recs.insert recHash recInfo }
+      | none => env
+    ) env
+  countForallE : Expr → Nat
+    | .forallE _ body => 1 + countForallE body
+    | _ => 0
 
-/-- Check if a hash exists in the environment. -/
+/-- Check if a hash exists in the environment (decls, ctors, recs, or indTypes). -/
 def contains (env : Environment) (h : Hash) : Bool :=
-  env.decls.contains h
+  env.decls.contains h || env.ctors.contains h ||
+  env.recs.contains h || env.indTypes.contains h
 
 /-- Get the type of a declaration (for axioms and definitions). -/
 def getDeclType (env : Environment) (h : Hash) (univs : List Level) : Option Expr :=
@@ -56,7 +146,7 @@ def getDeclValue (env : Environment) (h : Hash) (univs : List Level) : Option Ex
     | _ => none
   | none => none
 
-/-- Get an inductive block from the environment. -/
+/-- Get an inductive block from the environment (by block declaration hash). -/
 def getInductiveBlock (env : Environment) (h : Hash) : Option InductiveBlock :=
   match env.lookup h with
   | some info =>
