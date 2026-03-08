@@ -26,18 +26,10 @@ def substParams (ls : List Level) : Level → Level
   | .imax l₁ l₂ => .imax (substParams ls l₁) (substParams ls l₂)
   | .param n => ls.getD n (.param n)
 
-/-- Normalize a level to a canonical form.
-    `imax u 0 = 0` and `imax u (succ v) = max u (succ v)`. -/
-def normalize : Level → Level
-  | .zero => .zero
-  | .succ l => .succ (normalize l)
-  | .max l₁ l₂ => .max (normalize l₁) (normalize l₂)
-  | .imax l₁ l₂ =>
-    match normalize l₂ with
-    | .zero => .zero
-    | .succ l₂' => .max (normalize l₁) (.succ l₂')
-    | l₂' => .imax (normalize l₁) l₂'
-  | .param n => .param n
+/-- Build a level from a natural number: `nSucc n = succ^n(zero)`. -/
+def nSucc : Nat → Level
+  | 0 => .zero
+  | n + 1 => .succ (nSucc n)
 
 /-- Check if a level has no free universe parameters. -/
 def isClosed : Level → Bool
@@ -61,6 +53,32 @@ def toNat : Level → Option Nat
     if n₂ = 0 then return 0
     else return Nat.max n₁ n₂
   | .param _ => none
+
+/-- Normalize `max l₁ l₂`, simplifying trivial cases. -/
+private def mkMaxNorm (l₁ l₂ : Level) : Level :=
+  if l₁ == l₂ then l₁
+  else match l₁ with
+  | .zero => l₂
+  | _ => match l₂ with
+    | .zero => l₁
+    | _ => match l₁.toNat, l₂.toNat with
+      | some a, some b => nSucc (Nat.max a b)
+      | _, _ => .max l₁ l₂
+
+/-- Normalize a level to a canonical form.
+    `imax u 0 = 0` and `imax u (succ v) = max u (succ v)`.
+    `max l l = l`, `max 0 l = l`, `max l 0 = l`, and
+    `max (succ^a zero) (succ^b zero) = succ^(max a b) zero`. -/
+def normalize : Level → Level
+  | .zero => .zero
+  | .succ l => .succ (normalize l)
+  | .max l₁ l₂ => mkMaxNorm (normalize l₁) (normalize l₂)
+  | .imax l₁ l₂ =>
+    match normalize l₂ with
+    | .zero => .zero
+    | .succ l₂' => mkMaxNorm (normalize l₁) (.succ l₂')
+    | l₂' => .imax (normalize l₁) l₂'
+  | .param n => .param n
 
 /-- Check `l₁ ≤ l₂` for closed ground levels. -/
 def leq (l₁ l₂ : Level) : Option Bool := do

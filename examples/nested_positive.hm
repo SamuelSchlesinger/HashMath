@@ -1,0 +1,10 @@
+-- Nested inductive with positive parameter: should be accepted
+
+inductive List (A : Type) : Type where
+  | nil : List A
+  | cons : A → List A → List A
+
+-- Tree with a list of children: List uses A positively (in cons : A → List A → List A)
+inductive Tree : Type where
+  | leaf : Tree
+  | node : List Tree → Tree

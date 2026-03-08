@@ -1,0 +1,44 @@
+-- Universe arguments at call sites (Nat.rec.{1} for elimination into Type)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Nat.rec.{1} : (motive : Nat → Type) → motive Nat.zero → (∀ (n : Nat), motive n → motive (Nat.succ n)) → (n : Nat) → motive n
+
+-- Predecessor function using Nat.rec with explicit universe argument
+def pred : Nat → Nat :=
+  Nat.rec.{1}
+    (fun (_ : Nat) => Nat)
+    Nat.zero
+    (fun (n : Nat) (_ : Nat) => n)
+
+#check pred
+#eval pred Nat.zero
+#eval pred (Nat.succ Nat.zero)
+#eval pred (Nat.succ (Nat.succ (Nat.succ Nat.zero)))
+
+-- Addition via Nat.rec
+def add : Nat → Nat → Nat :=
+  fun (m : Nat) =>
+    Nat.rec.{1}
+      (fun (_ : Nat) => Nat)
+      m
+      (fun (_ : Nat) (ih : Nat) => Nat.succ ih)
+
+#eval add (Nat.succ (Nat.succ Nat.zero)) (Nat.succ (Nat.succ (Nat.succ Nat.zero)))
+
+-- Bool via Nat.rec
+inductive Bool : Type where
+  | false : Bool
+  | true : Bool
+
+def isZero : Nat → Bool :=
+  Nat.rec.{1}
+    (fun (_ : Nat) => Bool)
+    Bool.true
+    (fun (_ : Nat) (_ : Bool) => Bool.false)
+
+#eval isZero Nat.zero
+#eval isZero (Nat.succ Nat.zero)
+#eval isZero (Nat.succ (Nat.succ Nat.zero))

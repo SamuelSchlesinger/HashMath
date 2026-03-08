@@ -1,0 +1,10 @@
+-- Declaration-site .{u} universe parameters (no space before dot)
+
+def id.{u} : Sort u → Sort u := fun (A : Sort u) => A
+
+-- Also test axiom with .{u}
+axiom transport.{u} : ∀ (A : Sort u) (B : Sort u), A → B
+
+-- Verify they work
+#check id
+#check transport

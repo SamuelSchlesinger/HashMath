@@ -230,4 +230,25 @@ end
 def deltaUnfold (env : Environment) (h : Hash) (univs : List Level) : Option Expr :=
   env.getDeclValue h univs
 
+/-- Full normalization: reduce everywhere (inside constructors, under binders, etc.).
+    First reduces to WHNF, then recursively normalizes sub-expressions. -/
+partial def normalize (env : Environment) (e : Expr) : Expr :=
+  let e' := whnf env e
+  match e' with
+  | .app _ _ =>
+    let (fn, args) := e'.getAppFnArgs
+    let fn' := normalize env fn
+    let args' := args.map (normalize env)
+    Expr.mkAppN fn' args'
+  | .lam ty body =>
+    .lam (normalize env ty) (normalize env body)
+  | .forallE ty body =>
+    .forallE (normalize env ty) (normalize env body)
+  | .letE ty val body =>
+    -- Let bindings should already be reduced by whnf, but handle just in case
+    .letE (normalize env ty) (normalize env val) (normalize env body)
+  | .proj h i s =>
+    .proj h i (normalize env s)
+  | _ => e'  -- sort, const (no def), bvar, iref — already in normal form
+
 end HashMath

@@ -330,6 +330,43 @@ private partial def whnfWithIRef (env : Environment) (e : Expr) : Expr :=
     | none => e
   | _ => e
 
+/-- Check if a specific de Bruijn index appears in an expression, shifting under binders. -/
+private def bvarOccursIn (idx : Nat) (e : Expr) : Bool :=
+  match e with
+  | .bvar i => i == idx
+  | .app f a => bvarOccursIn idx f || bvarOccursIn idx a
+  | .forallE ty body => bvarOccursIn idx ty || bvarOccursIn (idx + 1) body
+  | .lam ty body => bvarOccursIn idx ty || bvarOccursIn (idx + 1) body
+  | .letE ty val body => bvarOccursIn idx ty || bvarOccursIn idx val || bvarOccursIn (idx + 1) body
+  | .proj _ _ s => bvarOccursIn idx s
+  | _ => false
+
+/-- Check strict positivity of a de Bruijn variable in an expression.
+    The variable must not appear in a negative position (domain of a forallE). -/
+private def checkBvarStrictPositivity (bvIdx : Nat) (e : Expr) : Bool :=
+  match e with
+  | .forallE domTy body =>
+    if bvarOccursIn bvIdx domTy then false
+    else checkBvarStrictPositivity (bvIdx + 1) body
+  | _ => true
+
+/-- Check that a parameter is strictly positive in a raw constructor type.
+    `ctorTy` starts from parameter binders; `numParams` is the count of params;
+    `paramIdx` is 0-indexed from the outermost parameter. -/
+private def checkParamPositiveInCtor (ctorTy : Expr) (numParams paramIdx : Nat) : Bool :=
+  go ctorTy 0
+where
+  go (ty : Expr) (depth : Nat) : Bool :=
+    match ty with
+    | .forallE domTy body =>
+      if depth < numParams then go body (depth + 1)
+      else
+        -- At depth d, parameter paramIdx (0-indexed from outermost) is bvar (d - 1 - paramIdx)
+        let pBvar := depth - 1 - paramIdx
+        if !checkBvarStrictPositivity pBvar domTy then false
+        else go body (depth + 1)
+    | _ => true
+
 /-- Check strict positivity of the inductive type in a constructor argument type.
     The inductive must not appear in a negative position (domain of a forallE).
     Normalizes through definitions to detect hidden negative occurrences.
@@ -341,7 +378,27 @@ private partial def checkStrictPositivity (env : Environment) (indIndices : List
     -- The inductive type must NOT appear in the domain (negative position)
     if irefOccursIn indIndices domTy then false
     else checkStrictPositivity env indIndices body
-  | _ => true  -- In the result position, any occurrence is fine
+  | _ =>
+    if !irefOccursIn indIndices e' then true
+    else
+      -- Check nested inductive: iref as argument to a previously-defined inductive
+      let (hd, args) := e'.getAppFnArgs
+      match hd with
+      | .const h _ =>
+        match env.getInductiveBlockForType h with
+        | some (block, typeIdx) =>
+          match block.types[typeIdx]? with
+          | some containerIndTy =>
+            (List.range args.length).all fun argIdx =>
+              let arg := args.getD argIdx (.sort .zero)
+              if !irefOccursIn indIndices arg then true
+              else if argIdx >= block.numParams then false  -- iref in index arg: reject
+              else
+                containerIndTy.ctors.all fun ctorTy =>
+                  checkParamPositiveInCtor ctorTy block.numParams argIdx
+          | none => false
+        | none => false  -- iref in arg to non-inductive const (axiom): reject conservatively
+      | _ => true  -- head is iref itself or bvar: valid recursive occurrence
 
 /-- Check that a constructor argument satisfies strict positivity.
     Normalizes through definitions to detect hidden negative occurrences.

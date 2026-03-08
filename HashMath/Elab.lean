@@ -41,13 +41,9 @@ def pushLocal (ctx : ElabContext) (name : String) : ElabContext :=
 
 end ElabContext
 
-private def nSucc : Nat → Level
-  | 0 => .zero
-  | n + 1 => .succ (nSucc n)
-
 def elabLevel (ctx : ElabContext) (l : SLevel) : Except String Level :=
   match l with
-  | .num n => .ok (nSucc n)
+  | .num n => .ok (Level.nSucc n)
   | .param name =>
     match listIndexOf ctx.univParams name with
     | some idx => .ok (.param idx)
@@ -65,7 +61,7 @@ partial def elabExprCore (ctx : ElabContext)
   let rec_ := elabExprCore ctx irefCtx
   let recLocal := fun name => elabExprCore (ctx.pushLocal name) irefCtx
   match e with
-  | .var name =>
+  | .var name univArgs =>
     -- Check type names first (for constructor types in inductive blocks)
     match irefCtx.bind (fun (typeNames, univLevels) =>
         (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
@@ -75,7 +71,9 @@ partial def elabExprCore (ctx : ElabContext)
       | some idx => .ok (.bvar idx)
       | none =>
         match ctx.constants[name]? with
-        | some h => .ok (.const h [])
+        | some h => do
+          let univLevels ← univArgs.mapM (elabLevel ctx)
+          .ok (.const h univLevels)
         | none => .error s!"unknown variable '{name}'"
   | .sort l => do return .sort (← elabLevel ctx l)
   | .app f a => do return .app (← rec_ f) (← rec_ a)
@@ -293,7 +291,7 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
   | .eval e =>
     let ctx := cb.toElabCtx
     let e' ← elabExpr ctx e
-    let result := whnf cb.env e'
+    let result := normalize cb.env e'
     return (cb, .evaluated e' result)
 
   | .print name =>

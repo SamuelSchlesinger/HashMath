@@ -8,9 +8,14 @@ import HashMath.Quotient
 
 namespace HashMath
 
-/-- Check level equality after normalization. -/
+/-- Check level equality after normalization.
+    Falls back to numeric comparison for closed ground levels. -/
 def isLevelDefEq (l₁ l₂ : Level) : Bool :=
-  l₁.beqNorm l₂
+  let n₁ := l₁.normalize
+  let n₂ := l₂.normalize
+  n₁ == n₂ || match (n₁.toNat, n₂.toNat) with
+    | (some a, some b) => a == b
+    | _ => false
 
 /-- Check cumulativity: Sort l₁ ≤ Sort l₂ -/
 def isLevelLeq (l₁ l₂ : Level) : Option Bool :=

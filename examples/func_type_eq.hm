@@ -1,0 +1,15 @@
+-- Function type equality: requires max 1 1 == 1
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Nat → Nat has type Sort (imax 1 1) which should normalize to Sort 1 = Type
+-- Eq requires both sides to have the same type
+
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-- This only type-checks if Sort (imax 1 1) == Sort 1, i.e., max 1 1 == 1
+def eqFunTy : ∀ (f : Nat → Nat), Eq (Nat → Nat) f f :=
+  fun (f : Nat → Nat) => Eq.refl (Nat → Nat) f

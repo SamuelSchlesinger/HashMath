@@ -17,7 +17,7 @@ inductive SLevel where
 
 /-- Surface-level expressions with named variables and constants. -/
 inductive SExpr where
-  | var : String → SExpr
+  | var : String → List SLevel → SExpr
   | sort : SLevel → SExpr
   | app : SExpr → SExpr → SExpr
   | lam : String → SExpr → SExpr → SExpr       -- fun (name : type) => body

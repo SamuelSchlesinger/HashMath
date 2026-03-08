@@ -1,0 +1,9 @@
+-- Nested positivity violation: container uses parameter negatively
+
+-- Bad uses T negatively: (T → T) in the domain
+inductive Bad (T : Type) : Type where
+  | mk : (T → T) → Bad T
+
+-- ERROR: Evil passes itself through Bad's negative parameter
+inductive Evil : Type where
+  | node : Bad Evil → Evil

@@ -175,6 +175,19 @@ private def identNonReserved : P String :=
     else
       P.pure name
 
+/-- Check if a parsed identifier ends with '.' and the next char is '{'.
+    If so, strip the trailing dot and return true (the '{' has been consumed). -/
+private def checkTrailingDotBrace (name : String) : P (String × Bool) := fun s =>
+  if name.endsWith "." then
+    let pos := skipWs s.input s.pos
+    if pos < strEndPos s.input && s.input.get pos == '{' then
+      let trimmed := name.dropRight 1
+      .ok ((trimmed, true), ⟨s.input, s.input.next pos⟩)
+    else
+      .ok ((name, false), s)
+  else
+    .ok ((name, false), s)
+
 -- All parsing functions use explicit state-passing and P.bind.
 
 mutual
@@ -200,6 +213,16 @@ private partial def parseLevel : P SLevel := do
       else
         return .param name
   | none => P.fail "expected universe level"
+
+/-- Parse expression-level universe arguments: `.{level, level, ...}` -/
+private partial def parseExprUnivArgs : P (List SLevel) := do
+  let r? ← P.tryP (symbol ".{")
+  match r? with
+  | some () =>
+    let levels ← sepBy parseLevel (symbol ",")
+    let () ← symbol "}"
+    return levels
+  | none => return []
 
 private partial def parseAtom : P SExpr := do
   let () ← ws
@@ -229,7 +252,17 @@ private partial def parseAtom : P SExpr := do
       else if reservedWords.any (· == name) then
         P.fail s!"unexpected keyword '{name}'"
       else
-        return .var name
+        -- Handle Name.{level, ...}: ident parser consumes trailing dot,
+        -- so check if name ends with '.' and next char is '{'
+        let (name', hasTrailingDotBrace) ← checkTrailingDotBrace name
+        if hasTrailingDotBrace then
+          let levels ← sepBy parseLevel (symbol ",")
+          let () ← symbol "}"
+          return .var name' levels
+        else
+          -- Also try .{ without trailing dot (e.g., if name has no dot)
+          let univArgs ← parseExprUnivArgs
+          return .var name' univArgs
     else
       P.fail s!"unexpected character '{c}'"
 
@@ -320,9 +353,21 @@ private def parseUnivParams : P (List String) := do
     return params
   | none => return []
 
-private def parseInductive : P SDecl := do
+/-- Parse an identifier that may have `.{u, v, ...}` universe parameters attached.
+    Handles both `name .{u}` (space before dot) and `name.{u}` (no space, dot consumed by ident). -/
+private def identWithUnivParams : P (String × List String) := do
   let name ← identNonReserved
-  let univParams ← parseUnivParams
+  let (name', hasDotBrace) ← checkTrailingDotBrace name
+  if hasDotBrace then
+    let params ← sepBy identNonReserved (symbol ",")
+    let () ← symbol "}"
+    return (name', params)
+  else
+    let univParams ← parseUnivParams
+    return (name', univParams)
+
+private def parseInductive : P SDecl := do
+  let (name, univParams) ← identWithUnivParams
   let paramBinders ← many parseBinder
   let allParams := paramBinders.foldl (· ++ ·) []
   let () ← symbol ":"
@@ -377,8 +422,7 @@ def parseCommand : P Command := do
     -- Try axiom
     match ← P.tryP (keyword "axiom") with
     | some () =>
-      let name ← identNonReserved
-      let univParams ← parseUnivParams
+      let (name, univParams) ← identWithUnivParams
       let () ← symbol ":"
       let ty ← parseExpr
       return .decl (.axiom_ name univParams ty)
@@ -386,8 +430,7 @@ def parseCommand : P Command := do
     -- Try def
     match ← P.tryP (keyword "def") with
     | some () =>
-      let name ← identNonReserved
-      let univParams ← parseUnivParams
+      let (name, univParams) ← identWithUnivParams
       let () ← symbol ":"
       let ty ← parseExpr
       let () ← symbol ":="
