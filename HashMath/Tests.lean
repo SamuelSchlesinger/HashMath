@@ -1013,7 +1013,10 @@ private def byteArrayToHex (bs : ByteArray) : String :=
       else
         IO.println "Large elimination (empty Prop) FAIL: should allow large elim"
 
-  -- Single-ctor Prop with Prop fields only: should allow large elimination
+  -- Single-ctor Prop with fields of type Prop (= Sort 0): large elimination should be BLOCKED.
+  -- A field of type Prop means the field value is a proposition (a type in Sort 0),
+  -- which carries computational content. inferType (Sort 0) = Sort 1 ≠ Sort 0.
+  -- This is different from a field of type `a` where `a : Prop` (a proof, no content).
   -- inductive MyAnd : Sort 0 where
   --   | intro : Sort 0 → Sort 0 → MyAnd
   let andBlock : InductiveBlock := {
@@ -1034,9 +1037,9 @@ private def byteArrayToHex (bs : ByteArray) : String :=
     | none => IO.println "And recursor not found: FAIL"
     | some recInfo3 =>
       if recInfo3.allowsLargeElim then
-        IO.println "Large elimination (And-like, 1 ctor, Prop fields): OK"
+        IO.println "Large elimination (And-like) FAIL: should block large elim (fields are Sort 0, not proofs)"
       else
-        IO.println "Large elimination (And-like) FAIL: should allow large elim"
+        IO.println "Large elimination (And-like, fields of type Prop): OK (large elim blocked)"
 
   -- Single-ctor Prop with Type field: should NOT allow large elimination
   -- inductive BadProp : Sort 0 where

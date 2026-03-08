@@ -54,6 +54,10 @@ def tryP (p : P α) : P (Option α) := fun s =>
 
 end P
 
+instance : Monad P where
+  pure := P.pure
+  bind := P.bind
+
 private partial def skipWs (input : String) (pos : String.Pos.Raw) : String.Pos.Raw :=
   if pos >= strEndPos input then pos
   else
@@ -175,383 +179,234 @@ private def identNonReserved : P String :=
 
 mutual
 
-private partial def parseLevel (s : PState) : Except String (SLevel × PState) :=
-  match ws s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match P.peek s with
-    | .error e => .error e
-    | .ok (c?, s) =>
-      match c? with
-      | some c =>
-        if c.isDigit then
-          match natLit s with
-          | .error e => .error e
-          | .ok (n, s) => .ok (.num n, s)
-        else
-          match ident s with
-          | .error e => .error e
-          | .ok (name, s) =>
-            if name == "max" then
-              match parseLevel s with
-              | .error e => .error e
-              | .ok (l1, s) =>
-                match parseLevel s with
-                | .error e => .error e
-                | .ok (l2, s) => .ok (.max l1 l2, s)
-            else if name == "imax" then
-              match parseLevel s with
-              | .error e => .error e
-              | .ok (l1, s) =>
-                match parseLevel s with
-                | .error e => .error e
-                | .ok (l2, s) => .ok (.imax l1 l2, s)
-            else
-              .ok (.param name, s)
-      | none => .error "expected universe level"
+private partial def parseLevel : P SLevel := do
+  let () ← ws
+  let c? ← P.peek
+  match c? with
+  | some c =>
+    if c.isDigit then
+      let n ← natLit
+      return .num n
+    else
+      let name ← ident
+      if name == "max" then
+        let l1 ← parseLevel
+        let l2 ← parseLevel
+        return .max l1 l2
+      else if name == "imax" then
+        let l1 ← parseLevel
+        let l2 ← parseLevel
+        return .imax l1 l2
+      else
+        return .param name
+  | none => P.fail "expected universe level"
 
-private partial def parseAtom (s : PState) : Except String (SExpr × PState) :=
-  match ws s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match P.peek s with
-    | .error e => .error e
-    | .ok (c?, s) =>
-      match c? with
-      | none => .error "expected expression"
-      | some '(' =>
-        match symbol "(" s with
-        | .error e => .error e
-        | .ok ((), s) =>
-          match parseExpr s with
-          | .error e => .error e
-          | .ok (e, s) =>
-            match symbol ")" s with
-            | .error e => .error e
-            | .ok ((), s) => .ok (e, s)
-      | some c =>
-        if c.isDigit then
-          .error "numeric literals not supported; use zero/succ"
-        else if c.isAlpha || c == '_' then
-          match ident s with
-          | .error e => .error e
-          | .ok (name, s) =>
-            if name == "Sort" then
-              match parseLevel s with
-              | .error e => .error e
-              | .ok (l, s) => .ok (.sort l, s)
-            else if name == "Prop" then
-              .ok (.sort (.num 0), s)
-            else if name == "Type" then
-              match P.tryP natLit s with
-              | .error e => .error e
-              | .ok (n?, s) =>
-                match n? with
-                | some n => .ok (.sort (.num (n + 1)), s)
-                | none => .ok (.sort (.num 1), s)
-            else if reservedWords.any (· == name) then
-              .error s!"unexpected keyword '{name}'"
-            else
-              .ok (.var name, s)
-        else
-          .error s!"unexpected character '{c}'"
+private partial def parseAtom : P SExpr := do
+  let () ← ws
+  let c? ← P.peek
+  match c? with
+  | none => P.fail "expected expression"
+  | some '(' =>
+    let () ← symbol "("
+    let e ← parseExpr
+    let () ← symbol ")"
+    return e
+  | some c =>
+    if c.isDigit then
+      P.fail "numeric literals not supported; use zero/succ"
+    else if c.isAlpha || c == '_' then
+      let name ← ident
+      if name == "Sort" then
+        let l ← parseLevel
+        return .sort l
+      else if name == "Prop" then
+        return .sort (.num 0)
+      else if name == "Type" then
+        let n? ← P.tryP natLit
+        match n? with
+        | some n => return .sort (.num (n + 1))
+        | none => return .sort (.num 1)
+      else if reservedWords.any (· == name) then
+        P.fail s!"unexpected keyword '{name}'"
+      else
+        return .var name
+    else
+      P.fail s!"unexpected character '{c}'"
 
-private partial def parseAppExpr (s : PState) : Except String (SExpr × PState) :=
-  match parseAtom s with
-  | .error e => .error e
-  | .ok (head, s) =>
-    match many parseAtom s with
-    | .error e => .error e
-    | .ok (args, s) =>
-      .ok (args.foldl SExpr.app head, s)
+private partial def parseAppExpr : P SExpr := do
+  let head ← parseAtom
+  let args ← many parseAtom
+  return args.foldl SExpr.app head
 
-private partial def parseArrowExpr (s : PState) : Except String (SExpr × PState) :=
-  match parseAppExpr s with
-  | .error e => .error e
-  | .ok (lhs, s) =>
-    match P.tryP (symbol "→") s with
-    | .error e => .error e
-    | .ok (arrow?, s) =>
-      match arrow? with
-      | some () =>
-        match parseExpr s with
-        | .error e => .error e
-        | .ok (rhs, s) => .ok (.arrow lhs rhs, s)
-      | none => .ok (lhs, s)
+private partial def parseArrowExpr : P SExpr := do
+  let lhs ← parseAppExpr
+  let arrow? ← P.tryP (symbol "→")
+  match arrow? with
+  | some () =>
+    let rhs ← parseExpr
+    return .arrow lhs rhs
+  | none => return lhs
 
-private partial def parseBinder (s : PState) : Except String (List (String × SExpr) × PState) :=
-  match symbol "(" s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match many1 identNonReserved s with
-    | .error e => .error e
-    | .ok (names, s) =>
-      match symbol ":" s with
-      | .error e => .error e
-      | .ok ((), s) =>
-        match parseExpr s with
-        | .error e => .error e
-        | .ok (ty, s) =>
-          match symbol ")" s with
-          | .error e => .error e
-          | .ok ((), s) => .ok (names.map (·, ty), s)
+private partial def parseBinder : P (List (String × SExpr)) := do
+  let () ← symbol "("
+  let names ← many1 identNonReserved
+  let () ← symbol ":"
+  let ty ← parseExpr
+  let () ← symbol ")"
+  return names.map (·, ty)
 
-private partial def parseExpr (s : PState) : Except String (SExpr × PState) :=
-  match ws s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match P.tryP (keyword "fun") s with
-    | .error e => .error e
-    | .ok (lam?, s) =>
-      match lam? with
-      | some () => parseLambda s
+private partial def parseExpr : P SExpr := do
+  let () ← ws
+  let lam? ← P.tryP (keyword "fun")
+  match lam? with
+  | some () => parseLambda
+  | none =>
+    let fa? ← P.tryP (symbol "∀")
+    match fa? with
+    | some () => parseForallE
+    | none =>
+      let fa2? ← P.tryP (keyword "forall")
+      match fa2? with
+      | some () => parseForallE
       | none =>
-        match P.tryP (symbol "∀") s with
-        | .error e => .error e
-        | .ok (fa?, s) =>
-          match fa? with
-          | some () => parseForallE s
-          | none =>
-            match P.tryP (keyword "forall") s with
-            | .error e => .error e
-            | .ok (fa2?, s) =>
-              match fa2? with
-              | some () => parseForallE s
-              | none =>
-                match P.tryP (symbol "λ") s with
-                | .error e => .error e
-                | .ok (lam2?, s) =>
-                  match lam2? with
-                  | some () => parseLambda s
-                  | none =>
-                    match P.tryP (keyword "let") s with
-                    | .error e => .error e
-                    | .ok (let_?, s) =>
-                      match let_? with
-                      | some () => parseLetE s
-                      | none => parseArrowExpr s
+        let lam2? ← P.tryP (symbol "λ")
+        match lam2? with
+        | some () => parseLambda
+        | none =>
+          let let_? ← P.tryP (keyword "let")
+          match let_? with
+          | some () => parseLetE
+          | none => parseArrowExpr
 
-private partial def parseLambda (s : PState) : Except String (SExpr × PState) :=
-  match many1 parseBinder s with
-  | .error e => .error e
-  | .ok (binders, s) =>
-    let allBinders := binders.foldl (· ++ ·) []
-    match symbol "=>" s with
-    | .error e => .error e
-    | .ok ((), s) =>
-      match parseExpr s with
-      | .error e => .error e
-      | .ok (body, s) => .ok (SExpr.mkLam allBinders body, s)
+private partial def parseLambda : P SExpr := do
+  let binders ← many1 parseBinder
+  let allBinders := binders.foldl (· ++ ·) []
+  let () ← symbol "=>"
+  let body ← parseExpr
+  return SExpr.mkLam allBinders body
 
-private partial def parseForallE (s : PState) : Except String (SExpr × PState) :=
-  match many1 parseBinder s with
-  | .error e => .error e
-  | .ok (binders, s) =>
-    let allBinders := binders.foldl (· ++ ·) []
-    match symbol "," s with
-    | .error e => .error e
-    | .ok ((), s) =>
-      match parseExpr s with
-      | .error e => .error e
-      | .ok (body, s) => .ok (SExpr.mkPi allBinders body, s)
+private partial def parseForallE : P SExpr := do
+  let binders ← many1 parseBinder
+  let allBinders := binders.foldl (· ++ ·) []
+  let () ← symbol ","
+  let body ← parseExpr
+  return SExpr.mkPi allBinders body
 
-private partial def parseLetE (s : PState) : Except String (SExpr × PState) :=
-  match identNonReserved s with
-  | .error e => .error e
-  | .ok (name, s) =>
-    match symbol ":" s with
-    | .error e => .error e
-    | .ok ((), s) =>
-      match parseExpr s with
-      | .error e => .error e
-      | .ok (ty, s) =>
-        match symbol ":=" s with
-        | .error e => .error e
-        | .ok ((), s) =>
-          match parseExpr s with
-          | .error e => .error e
-          | .ok (val, s) =>
-            match keyword "in" s with
-            | .error e => .error e
-            | .ok ((), s) =>
-              match parseExpr s with
-              | .error e => .error e
-              | .ok (body, s) => .ok (.letE name ty val body, s)
+private partial def parseLetE : P SExpr := do
+  let name ← identNonReserved
+  let () ← symbol ":"
+  let ty ← parseExpr
+  let () ← symbol ":="
+  let val ← parseExpr
+  let () ← keyword "in"
+  let body ← parseExpr
+  return .letE name ty val body
 
 end -- mutual
 
-private def parseConstructor (s : PState) : Except String (SConstructor × PState) :=
-  match symbol "|" s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match identNonReserved s with
-    | .error e => .error e
-    | .ok (name, s) =>
-      match symbol ":" s with
-      | .error e => .error e
-      | .ok ((), s) =>
-        match parseExpr s with
-        | .error e => .error e
-        | .ok (ty, s) => .ok ({ name, type := ty }, s)
+private def parseConstructor : P SConstructor := do
+  let () ← symbol "|"
+  let name ← identNonReserved
+  let () ← symbol ":"
+  let ty ← parseExpr
+  return { name, type := ty }
 
-private def parseUnivParams (s : PState) : Except String (List String × PState) :=
-  match P.tryP (symbol ".{") s with
-  | .error e => .error e
-  | .ok (r?, s) =>
-    match r? with
+private def parseUnivParams : P (List String) := do
+  let r? ← P.tryP (symbol ".{")
+  match r? with
+  | some () =>
+    let params ← sepBy identNonReserved (symbol ",")
+    let () ← symbol "}"
+    return params
+  | none => return []
+
+private def parseInductive : P SDecl := do
+  let name ← identNonReserved
+  let univParams ← parseUnivParams
+  let paramBinders ← many parseBinder
+  let allParams := paramBinders.foldl (· ++ ·) []
+  let () ← symbol ":"
+  let ty ← parseExpr
+  let () ← keyword "where"
+  let ctors ← many parseConstructor
+  -- Wrap type and constructor types with parameter binders
+  let wrappedTy := SExpr.mkPi allParams ty
+  let wrappedCtors := ctors.map fun c =>
+    { c with type := SExpr.mkPi allParams c.type }
+  return .inductive_ univParams (List.length allParams)
+    [{ name, type := wrappedTy, ctors := wrappedCtors }]
+
+private partial def parseMutualType : P SInductiveType := do
+  let () ← keyword "inductive"
+  let name ← identNonReserved
+  let () ← symbol ":"
+  let ty ← parseExpr
+  let () ← keyword "where"
+  let ctors ← many parseConstructor
+  return { name, type := ty, ctors }
+
+private def parseMutual : P SDecl := do
+  let univParams ← parseUnivParams
+  let types ← many1 parseMutualType
+  let () ← keyword "end"
+  return .inductive_ univParams 0 types
+
+def parseCommand : P Command := do
+  let () ← ws
+  let done ← P.atEnd
+  if done then P.fail "empty input"
+  else
+    -- Try #check
+    match ← P.tryP (symbol "#check") with
     | some () =>
-      match sepBy identNonReserved (symbol ",") s with
-      | .error e => .error e
-      | .ok (params, s) =>
-        match symbol "}" s with
-        | .error e => .error e
-        | .ok ((), s) => .ok (params, s)
-    | none => .ok ([], s)
-
-private def parseInductive (s : PState) : Except String (SDecl × PState) :=
-  match identNonReserved s with
-  | .error e => .error e
-  | .ok (name, s) =>
-    match parseUnivParams s with
-    | .error e => .error e
-    | .ok (univParams, s) =>
-      match many parseBinder s with
-      | .error e => .error e
-      | .ok (paramBinders, s) =>
-        let allParams := paramBinders.foldl (· ++ ·) []
-        match symbol ":" s with
-        | .error e => .error e
-        | .ok ((), s) =>
-          match parseExpr s with
-          | .error e => .error e
-          | .ok (ty, s) =>
-            match keyword "where" s with
-            | .error e => .error e
-            | .ok ((), s) =>
-              match many parseConstructor s with
-              | .error e => .error e
-              | .ok (ctors, s) =>
-                -- Wrap type and constructor types with parameter binders
-                let wrappedTy := SExpr.mkPi allParams ty
-                let wrappedCtors := ctors.map fun c =>
-                  { c with type := SExpr.mkPi allParams c.type }
-                .ok (.inductive_ univParams (List.length allParams)
-                  [{ name, type := wrappedTy, ctors := wrappedCtors }], s)
-
-private partial def parseMutualType (s : PState) : Except String (SInductiveType × PState) :=
-  match keyword "inductive" s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match identNonReserved s with
-    | .error e => .error e
-    | .ok (name, s) =>
-      match symbol ":" s with
-      | .error e => .error e
-      | .ok ((), s) =>
-        match parseExpr s with
-        | .error e => .error e
-        | .ok (ty, s) =>
-          match keyword "where" s with
-          | .error e => .error e
-          | .ok ((), s) =>
-            match many parseConstructor s with
-            | .error e => .error e
-            | .ok (ctors, s) => .ok ({ name, type := ty, ctors }, s)
-
-private def parseMutual (s : PState) : Except String (SDecl × PState) :=
-  match parseUnivParams s with
-  | .error e => .error e
-  | .ok (univParams, s) =>
-    match many1 parseMutualType s with
-    | .error e => .error e
-    | .ok (types, s) =>
-      match keyword "end" s with
-      | .error e => .error e
-      | .ok ((), s) => .ok (.inductive_ univParams 0 types, s)
-
-def parseCommand (s : PState) : Except String (Command × PState) :=
-  match ws s with
-  | .error e => .error e
-  | .ok ((), s) =>
-    match P.atEnd s with
-    | .error e => .error e
-    | .ok (done, s) =>
-      if done then .error "empty input"
-      else
-        -- Try #check
-        match P.tryP (symbol "#check") s with
-        | .ok (some (), s) =>
-          match parseExpr s with
-          | .ok (e, s) => .ok (.check e, s)
-          | .error e => .error e
-        | _ =>
-        -- Try #eval
-        match P.tryP (symbol "#eval") s with
-        | .ok (some (), s) =>
-          match parseExpr s with
-          | .ok (e, s) => .ok (.eval e, s)
-          | .error e => .error e
-        | _ =>
-        -- Try #print
-        match P.tryP (symbol "#print") s with
-        | .ok (some (), s) =>
-          match ident s with
-          | .ok (name, s) => .ok (.print name, s)
-          | .error e => .error e
-        | _ =>
-        -- Try axiom
-        match P.tryP (keyword "axiom") s with
-        | .ok (some (), s) =>
-          match identNonReserved s with
-          | .error e => .error e
-          | .ok (name, s) =>
-            match parseUnivParams s with
-            | .error e => .error e
-            | .ok (univParams, s) =>
-              match symbol ":" s with
-              | .error e => .error e
-              | .ok ((), s) =>
-                match parseExpr s with
-                | .error e => .error e
-                | .ok (ty, s) => .ok (.decl (.axiom_ name univParams ty), s)
-        | _ =>
-        -- Try def
-        match P.tryP (keyword "def") s with
-        | .ok (some (), s) =>
-          match identNonReserved s with
-          | .error e => .error e
-          | .ok (name, s) =>
-            match parseUnivParams s with
-            | .error e => .error e
-            | .ok (univParams, s) =>
-              match symbol ":" s with
-              | .error e => .error e
-              | .ok ((), s) =>
-                match parseExpr s with
-                | .error e => .error e
-                | .ok (ty, s) =>
-                  match symbol ":=" s with
-                  | .error e => .error e
-                  | .ok ((), s) =>
-                    match parseExpr s with
-                    | .error e => .error e
-                    | .ok (val, s) => .ok (.decl (.def_ name univParams ty val), s)
-        | _ =>
-        -- Try inductive
-        match P.tryP (keyword "inductive") s with
-        | .ok (some (), s) =>
-          match parseInductive s with
-          | .ok (d, s) => .ok (.decl d, s)
-          | .error e => .error e
-        | _ =>
-        -- Try mutual
-        match P.tryP (keyword "mutual") s with
-        | .ok (some (), s) =>
-          match parseMutual s with
-          | .ok (d, s) => .ok (.decl d, s)
-          | .error e => .error e
-        | _ =>
-        .error "expected command (axiom, def, inductive, mutual, #check, #eval, #print)"
+      let e ← parseExpr
+      return .check e
+    | none =>
+    -- Try #eval
+    match ← P.tryP (symbol "#eval") with
+    | some () =>
+      let e ← parseExpr
+      return .eval e
+    | none =>
+    -- Try #print
+    match ← P.tryP (symbol "#print") with
+    | some () =>
+      let name ← ident
+      return .print name
+    | none =>
+    -- Try axiom
+    match ← P.tryP (keyword "axiom") with
+    | some () =>
+      let name ← identNonReserved
+      let univParams ← parseUnivParams
+      let () ← symbol ":"
+      let ty ← parseExpr
+      return .decl (.axiom_ name univParams ty)
+    | none =>
+    -- Try def
+    match ← P.tryP (keyword "def") with
+    | some () =>
+      let name ← identNonReserved
+      let univParams ← parseUnivParams
+      let () ← symbol ":"
+      let ty ← parseExpr
+      let () ← symbol ":="
+      let val ← parseExpr
+      return .decl (.def_ name univParams ty val)
+    | none =>
+    -- Try inductive
+    match ← P.tryP (keyword "inductive") with
+    | some () =>
+      let d ← parseInductive
+      return .decl d
+    | none =>
+    -- Try mutual
+    match ← P.tryP (keyword "mutual") with
+    | some () =>
+      let d ← parseMutual
+      return .decl d
+    | none =>
+    P.fail "expected command (axiom, def, inductive, mutual, #check, #eval, #print)"
 
 private partial def parseCommandsGo (input : String) (posBytes : Nat) (acc : List Command)
     : Except String (List Command) :=

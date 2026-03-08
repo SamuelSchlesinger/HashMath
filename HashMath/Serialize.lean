@@ -39,15 +39,19 @@ namespace Tag
 end Tag
 
 /-- Serialize a single byte. -/
-private def serByte (b : UInt8) : ByteArray :=
+def serByte (b : UInt8) : ByteArray :=
   ByteArray.mk #[b]
 
 /-- Serialize a Nat as LEB128. -/
-private def serNat (n : Nat) : ByteArray :=
+def serNat (n : Nat) : ByteArray :=
   encodeLEB128 n
 
+/-- Serialize a Bool as a single byte (0x01 for true, 0x00 for false). -/
+def serBool (b : Bool) : ByteArray :=
+  ByteArray.mk #[if b then 0x01 else 0x00]
+
 /-- Serialize a Hash (fixed 32 bytes). -/
-private def serHash (h : Hash) : ByteArray :=
+def serHash (h : Hash) : ByteArray :=
   h.bytes
 
 /-- Serialize a universe level to its canonical byte representation. -/
@@ -94,7 +98,7 @@ def serializeInductiveBlock (block : InductiveBlock) : ByteArray :=
   serNat block.numParams ++
   serNat block.types.length ++
   ByteArray.concatList (block.types.map serializeInductiveType) ++
-  serByte (if block.isUnsafe then 0x01 else 0x00)
+  serBool block.isUnsafe
 
 /-- Serialize a declaration to its canonical byte representation. -/
 def serializeDecl : Decl → ByteArray

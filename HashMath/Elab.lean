@@ -26,11 +26,6 @@ where
     | [], _ => []
     | x :: xs, i => (x, i) :: go xs (i + 1)
 
-private def listHead (l : List String) (default : String) : String :=
-  match l with
-  | [] => default
-  | x :: _ => x
-
 structure ElabContext where
   locals : List String
   constants : Std.HashMap String Hash
@@ -61,65 +56,49 @@ def elabLevel (ctx : ElabContext) (l : SLevel) : Except String Level :=
   | .max l₁ l₂ => do return .max (← elabLevel ctx l₁) (← elabLevel ctx l₂)
   | .imax l₁ l₂ => do return .imax (← elabLevel ctx l₁) (← elabLevel ctx l₂)
 
-partial def elabExpr (ctx : ElabContext) (e : SExpr) : Except String Expr :=
+/-- Elaborate a surface expression to a kernel expression.
+    When `irefCtx` is provided, variable references matching type names in the mutual block
+    are elaborated as `iref` references instead of constants. -/
+partial def elabExprCore (ctx : ElabContext)
+    (irefCtx : Option (List String × List Level))
+    (e : SExpr) : Except String Expr :=
+  let rec_ := elabExprCore ctx irefCtx
+  let recLocal := fun name => elabExprCore (ctx.pushLocal name) irefCtx
   match e with
   | .var name =>
-    match listIndexOf ctx.locals name with
-    | some idx => .ok (.bvar idx)
-    | none =>
-      match ctx.constants[name]? with
-      | some h => .ok (.const h [])
-      | none => .error s!"unknown variable '{name}'"
-  | .sort l => do return .sort (← elabLevel ctx l)
-  | .app f a => do return .app (← elabExpr ctx f) (← elabExpr ctx a)
-  | .lam name ty body => do
-    return .lam (← elabExpr ctx ty) (← elabExpr (ctx.pushLocal name) body)
-  | .pi name ty body => do
-    return .forallE (← elabExpr ctx ty) (← elabExpr (ctx.pushLocal name) body)
-  | .arrow dom cod => do
-    return .forallE (← elabExpr ctx dom) (← elabExpr (ctx.pushLocal "_") cod)
-  | .letE name ty val body => do
-    return .letE (← elabExpr ctx ty) (← elabExpr ctx val) (← elabExpr (ctx.pushLocal name) body)
-  | .proj typeName idx struct =>
-    match ctx.constants[typeName]? with
-    | some h => do return .proj h idx (← elabExpr ctx struct)
-    | none => .error s!"unknown type '{typeName}' in projection"
-
-/-- Elaborate a constructor type, replacing references to types in the mutual block with iref. -/
-partial def elabCtorExpr (ctx : ElabContext) (typeNames : List String)
-    (univLevels : List Level) (e : SExpr) : Except String Expr :=
-  match e with
-  | .var name =>
-    match listIndexOf typeNames name with
-    | some idx => .ok (.iref idx univLevels)
+    -- Check type names first (for constructor types in inductive blocks)
+    match irefCtx.bind (fun (typeNames, univLevels) =>
+        (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
+    | some e => .ok e
     | none =>
       match listIndexOf ctx.locals name with
       | some idx => .ok (.bvar idx)
       | none =>
         match ctx.constants[name]? with
         | some h => .ok (.const h [])
-        | none => .error s!"unknown variable '{name}' in constructor type"
+        | none => .error s!"unknown variable '{name}'"
   | .sort l => do return .sort (← elabLevel ctx l)
-  | .app f a => do
-    return .app (← elabCtorExpr ctx typeNames univLevels f)
-               (← elabCtorExpr ctx typeNames univLevels a)
+  | .app f a => do return .app (← rec_ f) (← rec_ a)
   | .lam name ty body => do
-    return .lam (← elabCtorExpr ctx typeNames univLevels ty)
-               (← elabCtorExpr (ctx.pushLocal name) typeNames univLevels body)
+    return .lam (← rec_ ty) (← recLocal name body)
   | .pi name ty body => do
-    return .forallE (← elabCtorExpr ctx typeNames univLevels ty)
-                   (← elabCtorExpr (ctx.pushLocal name) typeNames univLevels body)
+    return .forallE (← rec_ ty) (← recLocal name body)
   | .arrow dom cod => do
-    return .forallE (← elabCtorExpr ctx typeNames univLevels dom)
-                   (← elabCtorExpr (ctx.pushLocal "_") typeNames univLevels cod)
+    return .forallE (← rec_ dom) (← recLocal "_" cod)
   | .letE name ty val body => do
-    return .letE (← elabCtorExpr ctx typeNames univLevels ty)
-               (← elabCtorExpr ctx typeNames univLevels val)
-               (← elabCtorExpr (ctx.pushLocal name) typeNames univLevels body)
+    return .letE (← rec_ ty) (← rec_ val) (← recLocal name body)
   | .proj typeName idx struct =>
     match ctx.constants[typeName]? with
-    | some h => do return .proj h idx (← elabCtorExpr ctx typeNames univLevels struct)
+    | some h => do return .proj h idx (← rec_ struct)
     | none => .error s!"unknown type '{typeName}' in projection"
+
+def elabExpr (ctx : ElabContext) (e : SExpr) : Except String Expr :=
+  elabExprCore ctx none e
+
+/-- Elaborate a constructor type, replacing references to types in the mutual block with iref. -/
+def elabCtorExpr (ctx : ElabContext) (typeNames : List String)
+    (univLevels : List Level) (e : SExpr) : Except String Expr :=
+  elabExprCore ctx (some (typeNames, univLevels)) e
 
 inductive ElabResult where
   | declared : String → Hash → ElabResult
@@ -219,8 +198,8 @@ partial def ppExpr (cb : Codebase) (univParams : List String := [])
 
 /-- Elaborate one inductive type from surface syntax. -/
 private def elabOneInductiveType (ctx : ElabContext) (univParams : List String)
-    (typeNames : List String) (_numParams : Nat)
-    (sind : SInductiveType) (_tidx : Nat) : Except String (InductiveType × List String) := do
+    (typeNames : List String)
+    (sind : SInductiveType) : Except String (InductiveType × List String) := do
   let ty' ← elabExpr ctx sind.type
   let univLevels := (List.range univParams.length).map (fun i => Level.param i)
   let ctorsAndNames ← elabCtors ctx typeNames univLevels sind.ctors
@@ -264,12 +243,12 @@ where
 
 /-- Elaborate all inductive types in a block. -/
 private def elabInductiveTypes (ctx : ElabContext) (univParams : List String)
-    (typeNames : List String) (numParams : Nat)
-    : List SInductiveType → Nat → Except String (List InductiveType × List (List String))
-  | [], _ => .ok ([], [])
-  | sind :: rest, tidx => do
-    let (indTy, cNames) ← elabOneInductiveType ctx univParams typeNames numParams sind tidx
-    let (restTypes, restNames) ← elabInductiveTypes ctx univParams typeNames numParams rest (tidx + 1)
+    (typeNames : List String)
+    : List SInductiveType → Except String (List InductiveType × List (List String))
+  | [] => .ok ([], [])
+  | sind :: rest => do
+    let (indTy, cNames) ← elabOneInductiveType ctx univParams typeNames sind
+    let (restTypes, restNames) ← elabInductiveTypes ctx univParams typeNames rest
     return (indTy :: restTypes, cNames :: restNames)
 
 def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × ElabResult) := do
@@ -294,7 +273,7 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
   | .decl (.inductive_ univParams numParams types) =>
     let ctx := cb.toElabCtx univParams
     let typeNames := types.map (·.name)
-    let (elabTypes, ctorNames) ← elabInductiveTypes ctx univParams typeNames numParams types 0
+    let (elabTypes, ctorNames) ← elabInductiveTypes ctx univParams typeNames types
     let block : InductiveBlock := {
       numUnivParams := univParams.length
       numParams := numParams
@@ -303,7 +282,7 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
     let (h, env') ← checkDecl cb.env (Decl.inductive block)
     let cb' := { cb with env := env' }
     let cb' := registerInductiveNames cb' h typeNames ctorNames
-    return (cb', .declared (listHead typeNames "inductive") h)
+    return (cb', .declared (typeNames.headD "inductive") h)
 
   | .check e =>
     let ctx := cb.toElabCtx

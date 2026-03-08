@@ -21,9 +21,6 @@ def hashLevel : Level → Hash
   | .max l₁ l₂ => hashBytes (serByte Tag.levelMax ++ (hashLevel l₁).bytes ++ (hashLevel l₂).bytes)
   | .imax l₁ l₂ => hashBytes (serByte Tag.levelIMax ++ (hashLevel l₁).bytes ++ (hashLevel l₂).bytes)
   | .param n => hashBytes (serByte Tag.levelParam ++ serNat n)
-where
-  serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-  serNat (n : Nat) : ByteArray := encodeLEB128 n
 
 /-- Hash an expression (Merkle-tree: tag ∥ child hashes). -/
 def hashExpr : Expr → Hash
@@ -41,21 +38,15 @@ def hashExpr : Expr → Hash
   | .iref idx ls =>
     hashBytes (serByte Tag.exprIRef ++ serNat idx ++ serNat ls.length ++
       ByteArray.concatList (ls.map fun l => (hashLevel l).bytes))
-where
-  serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-  serNat (n : Nat) : ByteArray := encodeLEB128 n
 
 /-- Hash an inductive type within a block. -/
 private def hashInductiveType (it : InductiveType) : Hash :=
-  let serNat (n : Nat) : ByteArray := encodeLEB128 n
   hashBytes ((hashExpr it.type).bytes ++
     serNat it.ctors.length ++
     ByteArray.concatList (it.ctors.map fun c => (hashExpr c).bytes))
 
 /-- Hash an inductive block. -/
 private def hashInductiveBlock (block : InductiveBlock) : Hash :=
-  let serNat (n : Nat) : ByteArray := encodeLEB128 n
-  let serBool (b : Bool) : ByteArray := ByteArray.mk #[if b then 0x01 else 0x00]
   hashBytes (serNat block.numUnivParams ++
     serNat block.numParams ++
     serNat block.types.length ++
@@ -65,38 +56,24 @@ private def hashInductiveBlock (block : InductiveBlock) : Hash :=
 /-- Hash a declaration (Merkle-tree: tag ∥ child hashes). -/
 def hashDecl : Decl → Hash
   | .axiom n ty =>
-    let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-    let serNat (n : Nat) : ByteArray := encodeLEB128 n
     hashBytes (serByte Tag.declAxiom ++ serNat n ++ (hashExpr ty).bytes)
   | .definition n ty val =>
-    let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-    let serNat (n : Nat) : ByteArray := encodeLEB128 n
     hashBytes (serByte Tag.declDefinition ++ serNat n ++ (hashExpr ty).bytes ++ (hashExpr val).bytes)
   | .inductive block =>
-    let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
     hashBytes (serByte Tag.declInductive ++ (hashInductiveBlock block).bytes)
   | .quotient kind =>
-    let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
     hashBytes (serByte Tag.declQuotient ++ serByte (serializeQuotKind kind))
-
--- Derived entity hash functions for inductive sub-entities
 
 /-- Hash of the i-th type in an inductive block. -/
 def hashIndType (blockHash : Hash) (typeIdx : Nat) : Hash :=
-  let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-  let serNat (n : Nat) : ByteArray := encodeLEB128 n
   hashBytes (serByte Tag.indType ++ blockHash.bytes ++ serNat typeIdx)
 
 /-- Hash of the j-th constructor of the i-th type in an inductive block. -/
 def hashCtor (blockHash : Hash) (typeIdx ctorIdx : Nat) : Hash :=
-  let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-  let serNat (n : Nat) : ByteArray := encodeLEB128 n
   hashBytes (serByte Tag.indCtor ++ blockHash.bytes ++ serNat typeIdx ++ serNat ctorIdx)
 
 /-- Hash of the recursor of the i-th type in an inductive block. -/
 def hashRec (blockHash : Hash) (typeIdx : Nat) : Hash :=
-  let serByte (b : UInt8) : ByteArray := ByteArray.mk #[b]
-  let serNat (n : Nat) : ByteArray := encodeLEB128 n
   hashBytes (serByte Tag.indRec ++ blockHash.bytes ++ serNat typeIdx)
 
 -- Collision resistance axiom: if sha256 produces equal outputs,

@@ -60,7 +60,7 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
       | some (block, typeIdx) =>
         match block.types[typeIdx]? with
         | some indTy => .ok (indTy.type.substLevelParams univs)
-        | none => .error "inferType: invalid inductive type index"
+        | none => .error s!"inferType: invalid inductive type index {typeIdx}"
       | none =>
         -- Check constructors
         match env.getConstructorInfo h with
@@ -131,7 +131,7 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
         | _ => .error "inferType: proj on non-structure"
       | _ => .error "inferType: proj on mutual inductive"
     | none => .error "inferType: unknown inductive for projection"
-  | .iref _ _ => .error "inferType: unresolved iref (should have been resolved before type-checking)"
+  | .iref idx _ => .error s!"inferType: unresolved iref {idx} (should have been resolved before type-checking)"
 
 /-- Check definitional equality of two expressions. -/
 partial def isDefEq (env : Environment) (ctx : LocalCtx) (t s : Expr) : Bool :=

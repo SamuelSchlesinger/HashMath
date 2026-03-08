@@ -80,7 +80,7 @@ structure RecursorInfo where
   nMinors : Nat          -- = total constructors across ALL types in the block
   nIndices : Nat         -- = indices for THIS type
   recTy : Expr
-  allowsLargeElim : Bool := true  -- default to true for backward compat
+  allowsLargeElim : Bool := false
   deriving Repr
 
 end HashMath

@@ -59,7 +59,7 @@ where
             match fieldLevel.normalize.leq targetLevel.normalize with
             | some true => go body (depth + 1) (domTy :: ctx)
             | some false =>
-              throw s!"checkDecl: field universe Sort {repr fieldLevel} exceeds target Sort {repr targetLevel}"
+              throw s!"checkDecl: field universe Sort {repr fieldLevel} exceeds target Sort {repr targetLevel} in constructor at depth {depth}"
             | none => go body (depth + 1) (domTy :: ctx)  -- polymorphic, can't determine statically
           | _ => throw s!"checkDecl: field domain type does not have a Sort type"
         | .error e => throw s!"checkDecl: cannot infer field type: {e}"
