@@ -66,7 +66,7 @@ structure ConstructorInfo where
   cIdx : Nat          -- which constructor of that type
   nParams : Nat
   nFields : Nat
-  recursiveFields : List (Nat × Nat)  -- (fieldIdx, targetTypeIdx) pairs for recursive fields
+  recursiveFields : List (Nat × Nat × List Expr)  -- (fieldIdx, targetTypeIdx, indexArgs) for recursive fields
   ty : Expr
   deriving Repr
 

@@ -1,0 +1,50 @@
+-- Evaluation of terms using #eval (weak head normal form)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Simple reductions
+#eval Nat.zero
+#eval Nat.succ Nat.zero
+#eval Nat.succ (Nat.succ Nat.zero)
+
+-- Definition unfolding
+def five : Nat := Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero))))
+#eval five
+
+-- Higher-order function reduction
+def twice : (Nat → Nat) → Nat → Nat :=
+  fun (f : Nat → Nat) (x : Nat) => f (f x)
+def add2 : Nat → Nat := twice Nat.succ
+
+#eval add2 Nat.zero
+#eval add2 (Nat.succ Nat.zero)
+
+-- Prop-level recursor reduction (no universe args needed)
+inductive Or (P : Prop) (Q : Prop) : Prop where
+  | inl : P → Or P Q
+  | inr : Q → Or P Q
+
+inductive True : Prop where
+  | intro : True
+
+inductive False : Prop where
+
+def or_swap : ∀ (P : Prop) (Q : Prop), Or P Q → Or Q P :=
+  fun (P : Prop) (Q : Prop) (h : Or P Q) =>
+    Or.rec P Q
+      (fun (_ : Or P Q) => Or Q P)
+      (fun (hp : P) => Or.inr Q P hp)
+      (fun (hq : Q) => Or.inl Q P hq)
+      h
+
+-- iota-reduction: or_swap applied to inl reduces to inr
+#eval or_swap True False (Or.inl True False True.intro)
+
+-- Let expression reduction
+def let_test : Nat :=
+  let x : Nat := Nat.succ Nat.zero in
+  Nat.succ x
+
+#eval let_test

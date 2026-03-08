@@ -1,0 +1,5 @@
+-- Definition type annotation must be a type (Sort)
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+def bad : Nat.zero := Nat.zero

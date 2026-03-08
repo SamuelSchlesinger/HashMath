@@ -77,7 +77,11 @@ def checkDecl (env : Environment) (d : Decl) : Except String (Hash × Environmen
     return env.addDecl d
 
   | .definition _numUnivs ty val =>
-    let _ ← inferTypeClosed env ty
+    let tyTy ← inferTypeClosed env ty
+    let tyTy' := whnf env tyTy
+    match tyTy' with
+    | .sort _ => pure ()
+    | _ => throw "checkDecl: definition type must be a type (Sort)"
     let valTy ← inferTypeClosed env val
     if !(isSubtype env [] valTy ty) then
       throw "checkDecl: definition value type mismatch"

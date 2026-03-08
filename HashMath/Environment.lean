@@ -58,17 +58,24 @@ def resolveIRef (blockHash : Hash) (e : Expr) : Expr :=
 
 /-- Walk a raw (pre-resolution) constructor type, skip `numParams` leading forallE binders,
     then for each remaining forallE check if its domain's head is an `iref`. Returns
-    (fieldIdx, targetTypeIdx) pairs for recursive fields. -/
-private def computeRecursiveFields (rawCtorTy : Expr) (numParams : Nat) : List (Nat × Nat) :=
+    (fieldIdx, targetTypeIdx, indexArgs) triples for recursive fields.
+    The indexArgs are the arguments to the type after the parameters (expressed as bvars
+    relative to the fields telescope: bvar 0 = current field, bvar 1 = previous, etc.). -/
+private def computeRecursiveFields (rawCtorTy : Expr) (numParams : Nat)
+    : List (Nat × Nat × List Expr) :=
   go (stripN rawCtorTy numParams) 0
 where
   stripN : Expr → Nat → Expr
     | .forallE _ body, n + 1 => stripN body n
     | e, _ => e
-  go : Expr → Nat → List (Nat × Nat)
+  go : Expr → Nat → List (Nat × Nat × List Expr)
     | .forallE domTy body, idx =>
       match domTy.getAppFn with
-      | .iref targetIdx _ => (idx, targetIdx) :: go body (idx + 1)
+      | .iref targetIdx _ =>
+        let allArgs := domTy.getAppArgs
+        -- Drop the first numParams args (which are the inductive's parameters)
+        let indexArgs := allArgs.drop numParams
+        (idx, targetIdx, indexArgs) :: go body (idx + 1)
       | _ => go body (idx + 1)
     | _, _ => []
 

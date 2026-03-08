@@ -73,7 +73,7 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
                 (args.drop nParams).take nMotives ++
                 (args.drop (nParams + nMotives)).take nMinors
               let minorArgs := buildMinorArgs fields 0 ctorInfo.recursiveFields
-                  recInfo.blockHash univs recPrefix
+                  recInfo.blockHash univs recPrefix majorArgs ctorInfo.nParams []
               let result := Expr.mkAppN minor minorArgs
               -- Also apply any remaining args beyond the recursor's expected args
               let extraArgs := args.drop expectedArgs
@@ -81,18 +81,43 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
         | none => none
       | _ => none
 where
-  buildMinorArgs (fields : List Expr) (idx : Nat) (recFields : List (Nat × Nat))
-      (blockHash : Hash) (univs : List Level) (recPrefix : List Expr) : List Expr :=
+  /-- Substitute bvars in an index argument with actual constructor arguments.
+      bvar(k) → allCtorArgs[nParams + fieldIdx - 1 - k] -/
+  substIndexArg (e : Expr) (allCtorArgs : List Expr) (nParams fieldIdx : Nat) : Expr :=
+    match e with
+    | .bvar k =>
+      let targetIdx := nParams + fieldIdx - 1 - k
+      allCtorArgs.getD targetIdx (.sort .zero)
+    | .sort l => .sort l
+    | .const h ls => .const h ls
+    | .app f a =>
+      .app (substIndexArg f allCtorArgs nParams fieldIdx) (substIndexArg a allCtorArgs nParams fieldIdx)
+    | .lam ty body =>
+      .lam (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
+    | .forallE ty body =>
+      .forallE (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
+    | .letE ty val body =>
+      .letE (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg val allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
+    | .proj h i s => .proj h i (substIndexArg s allCtorArgs nParams fieldIdx)
+    | .iref idx ls => .iref idx ls
+  buildMinorArgs (fields : List Expr) (idx : Nat)
+      (recFields : List (Nat × Nat × List Expr))
+      (blockHash : Hash) (univs : List Level) (recPrefix : List Expr)
+      (allCtorArgs : List Expr) (nParams : Nat) (recNIndices : List Nat) : List Expr :=
     match fields with
     | [] => []
     | f :: rest =>
-      match recFields.find? (fun (fIdx, _) => fIdx == idx) with
-      | some (_, targetTypeIdx) =>
+      match recFields.find? (fun (fIdx, _, _) => fIdx == idx) with
+      | some (_, targetTypeIdx, storedIdxArgs) =>
         let targetRecHash := hashRec blockHash targetTypeIdx
-        let ih := Expr.mkAppN (.const targetRecHash univs) (recPrefix ++ [f])
-        f :: ih :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix
+        -- Substitute bvars in stored index args with actual constructor args
+        let concreteIdxArgs := storedIdxArgs.map (fun e => substIndexArg e allCtorArgs nParams idx)
+        -- The target recursor expects: params motives minors indices major
+        -- recPrefix already has params ++ motives ++ minors
+        let ih := Expr.mkAppN (.const targetRecHash univs) (recPrefix ++ concreteIdxArgs ++ [f])
+        f :: ih :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix allCtorArgs nParams recNIndices
       | none =>
-        f :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix
+        f :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix allCtorArgs nParams recNIndices
 
 /-- Quotient reduction: `Quot.lift f h (Quot.mk r a) → f a` -/
 def quotLiftReduce (args : List Expr) (env : Environment)

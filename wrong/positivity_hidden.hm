@@ -1,0 +1,4 @@
+-- Negative occurrence hidden behind a type alias definition
+def F : Type → Type := fun (T : Type) => T → T
+inductive Bad : Type where
+  | mk : F Bad → Bad

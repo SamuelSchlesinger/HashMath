@@ -1,0 +1,35 @@
+-- Recursion via eliminators (Prop-level, no universe args needed)
+
+inductive Or (P : Prop) (Q : Prop) : Prop where
+  | inl : P → Or P Q
+  | inr : Q → Or P Q
+
+-- Or is commutative: Or P Q → Or Q P via Or.rec
+def or_swap : ∀ (P : Prop) (Q : Prop), Or P Q → Or Q P :=
+  fun (P : Prop) (Q : Prop) (h : Or P Q) =>
+    Or.rec P Q
+      (fun (_ : Or P Q) => Or Q P)
+      (fun (hp : P) => Or.inr Q P hp)
+      (fun (hq : Q) => Or.inl Q P hq)
+      h
+
+#check or_swap
+
+-- And (single ctor with all Prop fields — large elimination allowed, but needs universe args)
+inductive And (P : Prop) (Q : Prop) : Prop where
+  | intro : P → Q → And P Q
+
+-- Note: And.rec allows large elimination (Sort u), but from .hm syntax we can't provide
+-- universe arguments yet. So And.rec can't be used directly for elimination into Type.
+-- We can still axiomatize And elimination:
+axiom And.fst : ∀ (P : Prop) (Q : Prop), And P Q → P
+axiom And.snd : ∀ (P : Prop) (Q : Prop), And P Q → Q
+
+-- Swap: And P Q → And Q P (via axiomatized projections)
+def and_swap : ∀ (P : Prop) (Q : Prop), And P Q → And Q P :=
+  fun (P : Prop) (Q : Prop) (h : And P Q) =>
+    And.intro Q P (And.snd P Q h) (And.fst P Q h)
+
+#check And.fst
+#check And.snd
+#check and_swap

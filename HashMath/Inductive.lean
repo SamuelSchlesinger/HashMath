@@ -70,18 +70,34 @@ private def stripForallE (ty : Expr) : Nat → Expr
 private def getCtorIndexArgs (retType : Expr) (nP : Nat) : List Expr :=
   retType.getAppArgs.drop nP
 
-/-- Check if a domain type matches any type in the block applied to params.
-    Returns the index of the matching type, or `none`. -/
+/-- Check if a domain type matches any type in the block applied to params (possibly with indices).
+    Returns the index of the matching type and the index arguments, or `none`. -/
 private def findRecTarget (domTy : Expr) (typeHashes : List Hash)
-    (univs : List Level) (nP : Nat) (extraDepth : Nat) : Option Nat :=
-  go typeHashes 0
+    (univs : List Level) (nP : Nat) (extraDepth : Nat) : Option (Nat × List Expr) :=
+  let (hd, allArgs) := domTy.getAppFnArgs
+  match hd with
+  | .const h ls =>
+    -- Check that universe arguments match
+    if ls.length != univs.length then none
+    else if !(List.zip ls univs).all (fun (l₁, l₂) => l₁ == l₂) then none
+    else
+      -- Check that the first nP arguments match the parameter bvars
+      if allArgs.length < nP then none
+      else
+        let paramArgs := allArgs.take nP
+        let expectedParams := (List.range nP).map (fun i => Expr.bvar (extraDepth + nP - 1 - i))
+        if paramArgs != expectedParams then none
+        else
+          -- Find which type hash matches
+          let indexArgs := allArgs.drop nP
+          go typeHashes 0 h indexArgs
+  | _ => none
 where
-  go : List Hash → Nat → Option Nat
-    | [], _ => none
-    | th :: rest, k =>
-      let iApplied := mkIApplied th univs nP extraDepth
-      if domTy == iApplied then some k
-      else go rest (k + 1)
+  go : List Hash → Nat → Hash → List Expr → Option (Nat × List Expr)
+    | [], _, _, _ => none
+    | th :: rest, k, h, idxArgs =>
+      if h == th then some (k, idxArgs)
+      else go rest (k + 1) h idxArgs
 
 /-- Walk the field telescope of a constructor type (after params stripped and shifted),
     inserting IH binders for recursive fields, and producing the minor type.
@@ -106,11 +122,16 @@ private partial def processFields (ty : Expr) (depth : Nat)
   | .forallE domTy body =>
     -- Check if this field is recursive against any type in the block
     match findRecTarget domTy typeHashes univs nP (depth + baseOffset + 1) with
-    | some targetIdx =>
+    | some (targetIdx, idxArgs) =>
       -- Recursive field targeting type targetIdx
       -- Under field binder (depth+1): motive_targetIdx is at bvar (depth+1+baseOffset-targetIdx)
       let motiveRef := Expr.bvar (depth + 1 + baseOffset - targetIdx)
-      let ihType := Expr.app motiveRef (.bvar 0)
+      -- IH type: motive_target idxArgs... (bvar 0)
+      -- idxArgs are from domTy at the current scope (outside the field binder).
+      -- The IH type is inside the field binder, so lift idxArgs by 1 to account for
+      -- the new bvar 0 (the field value).
+      let liftedIdxArgs := idxArgs.map (fun e => e.liftN 1)
+      let ihType := Expr.mkAppN motiveRef (liftedIdxArgs ++ [.bvar 0])
       let liftedBody := body.liftN 1
       let rest := processFields liftedBody (depth + 2)
         nTypes baseOffset nP nIndices typeHashes ctorHash univs ownerTypeIdx (depth :: fieldDepths)
@@ -293,20 +314,40 @@ private def irefOccursIn (targetIndices : List Nat) (e : Expr) : Bool :=
   | .letE ty val body => irefOccursIn targetIndices ty || irefOccursIn targetIndices val || irefOccursIn targetIndices body
   | .proj _ _ s => irefOccursIn targetIndices s
 
+/-- Weak head normalize an expression that may contain `iref` nodes.
+    Unfolds constants and performs β/ζ-reduction, preserving iref. -/
+private partial def whnfWithIRef (env : Environment) (e : Expr) : Expr :=
+  match e with
+  | .app fn arg =>
+    let fn' := whnfWithIRef env fn
+    match fn' with
+    | .lam _ty body => whnfWithIRef env (body.instantiate arg)
+    | _ => if fn' == fn then e else .app fn' arg
+  | .letE _ty val body => whnfWithIRef env (body.instantiate val)
+  | .const h univs =>
+    match env.getDeclValue h univs with
+    | some val => whnfWithIRef env val
+    | none => e
+  | _ => e
+
 /-- Check strict positivity of the inductive type in a constructor argument type.
     The inductive must not appear in a negative position (domain of a forallE).
+    Normalizes through definitions to detect hidden negative occurrences.
     Operates on pre-resolution expressions (using `iref`). -/
-private def checkStrictPositivity (indIndices : List Nat) (e : Expr) : Bool :=
-  match e with
+private partial def checkStrictPositivity (env : Environment) (indIndices : List Nat) (e : Expr) : Bool :=
+  let e' := whnfWithIRef env e
+  match e' with
   | .forallE domTy body =>
     -- The inductive type must NOT appear in the domain (negative position)
     if irefOccursIn indIndices domTy then false
-    else checkStrictPositivity indIndices body
+    else checkStrictPositivity env indIndices body
   | _ => true  -- In the result position, any occurrence is fine
 
 /-- Check that a constructor argument satisfies strict positivity.
+    Normalizes through definitions to detect hidden negative occurrences.
     Operates on pre-resolution expressions (using `iref`). -/
-private def checkCtorArgPositivity (indIndices : List Nat) (ctorTy : Expr) (numParams : Nat) : Bool :=
+private partial def checkCtorArgPositivity (env : Environment) (indIndices : List Nat)
+    (ctorTy : Expr) (numParams : Nat) : Bool :=
   go ctorTy 0
 where
   go (ty : Expr) (depth : Nat) : Bool :=
@@ -317,11 +358,18 @@ where
         go body (depth + 1)
       else
         -- Non-parameter arguments: check strict positivity
+        -- Normalize domain to see through definitions
         if irefOccursIn indIndices domTy then
           -- The domain mentions the inductive type — check it's strictly positive
-          checkStrictPositivity indIndices domTy
+          checkStrictPositivity env indIndices domTy
         else
-          go body (depth + 1)
+          -- Even if iref not syntactically in domTy, the domain itself might normalize
+          -- to reveal hidden negative occurrences. Check the whnf-normalized form.
+          let domTy' := whnfWithIRef env domTy
+          if domTy' != domTy && irefOccursIn indIndices domTy' then
+            checkStrictPositivity env indIndices domTy'
+          else
+            go body (depth + 1)
     | _ => true
 
 /-- Check that an inductive block is well-formed.
@@ -329,7 +377,7 @@ where
     1. Type formers end in a Sort
     2. Constructor return types are consistent
     3. Strict positivity of inductive occurrences in constructor arguments -/
-def checkInductiveBlock (_env : Environment) (block : InductiveBlock) : Except String Unit := do
+def checkInductiveBlock (env : Environment) (block : InductiveBlock) : Except String Unit := do
   -- Use type indices for positivity checking (pre-resolution, using iref)
   let indIndices := List.range block.types.length
   for indTy in block.types do
@@ -339,7 +387,7 @@ def checkInductiveBlock (_env : Environment) (block : InductiveBlock) : Except S
     -- Check each constructor
     for ctorTy in indTy.ctors do
       -- Check strict positivity
-      if !checkCtorArgPositivity indIndices ctorTy block.numParams then
+      if !checkCtorArgPositivity env indIndices ctorTy block.numParams then
         throw "checkInductiveBlock: strict positivity violation"
       -- Check iref indices are in range
       if hasInvalidIRef ctorTy block.types.length then
