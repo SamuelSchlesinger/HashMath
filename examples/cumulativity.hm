@@ -1,0 +1,19 @@
+-- Universe cumulativity: Prop is a subtype of Type
+
+-- Prop ≤ Type ≤ Type 1 ...
+-- A term of type Prop can be used where Type is expected
+
+-- This is valid: P : Prop, and Prop : Type, so returning P where Type is expected works
+def returnProp : ∀ (P : Prop), P → Type := fun (P : Prop) (p : P) => P
+
+-- Identity at Type can be applied to Prop-level types
+def idType : Type → Type := fun (A : Type) => A
+
+-- Prop is a valid input since Prop : Type
+#check idType
+
+-- A polymorphic identity that works at any universe
+def id : ∀ (A : Type), A → A := fun (A : Type) (x : A) => x
+
+#check returnProp
+#check id

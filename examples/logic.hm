@@ -1,0 +1,40 @@
+-- Propositional logic
+
+-- Conjunction
+inductive And (P : Prop) (Q : Prop) : Prop where
+  | intro : P → Q → And P Q
+
+-- Disjunction
+inductive Or (P : Prop) (Q : Prop) : Prop where
+  | inl : P → Or P Q
+  | inr : Q → Or P Q
+
+-- Falsehood (empty proposition)
+inductive False : Prop where
+
+-- Truth (trivially provable)
+inductive True : Prop where
+  | intro : True
+
+-- Existential quantifier
+inductive Exists (A : Type) (P : A → Prop) : Prop where
+  | intro : ∀ (w : A), P w → Exists A P
+
+-- Negation
+def Not : Prop → Prop := fun (P : Prop) => P → False
+
+-- Ex falso quodlibet (axiomatized - we'd need the recursor to prove it)
+axiom False.elim : ∀ (P : Prop), False → P
+
+-- Double negation introduction
+def dne_intro : ∀ (P : Prop), P → Not (Not P) :=
+  fun (P : Prop) (p : P) (np : Not P) => np p
+
+#check And
+#check Or
+#check False
+#check True
+#check Exists
+#check Not
+#check False.elim
+#check dne_intro

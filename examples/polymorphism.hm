@@ -1,0 +1,61 @@
+-- Polymorphic functions over data structures
+
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Option (A : Type) : Type where
+  | none : Option A
+  | some : A → Option A
+
+inductive List (A : Type) : Type where
+  | nil : List A
+  | cons : A → List A → List A
+
+inductive Prod (A : Type) (B : Type) : Type where
+  | mk : A → B → Prod A B
+
+-- Map over Option (axiomatized - would need match/recursor)
+axiom Option.map : ∀ (A : Type) (B : Type), (A → B) → Option A → Option B
+
+-- Map over List
+axiom List.map : ∀ (A : Type) (B : Type), (A → B) → List A → List B
+
+-- Filter a list
+axiom List.filter : ∀ (A : Type), (A → Bool) → List A → List A
+
+-- Fold right
+axiom List.foldr : ∀ (A : Type) (B : Type), (A → B → B) → B → List A → B
+
+-- Fold left
+axiom List.foldl : ∀ (A : Type) (B : Type), (B → A → B) → B → List A → B
+
+-- Append
+axiom List.append : ∀ (A : Type), List A → List A → List A
+
+-- Reverse
+axiom List.reverse : ∀ (A : Type), List A → List A
+
+-- Length
+axiom List.length : ∀ (A : Type), List A → Nat
+
+-- Head
+axiom List.head : ∀ (A : Type), List A → Option A
+
+-- Zip
+axiom List.zip : ∀ (A : Type) (B : Type), List A → List B → List (Prod A B)
+
+#check Option.map
+#check List.map
+#check List.filter
+#check List.foldr
+#check List.foldl
+#check List.append
+#check List.reverse
+#check List.length
+#check List.head
+#check List.zip

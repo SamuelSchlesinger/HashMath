@@ -11,6 +11,9 @@ import HashMath.Reduce
 import HashMath.Inductive
 import HashMath.DefEq
 import HashMath.TypeChecker
+import HashMath.Syntax
+import HashMath.Parser
+import HashMath.Elab
 import HashMath.Properties.SerializeInj
 import HashMath.Properties.HashInjectivity
 import HashMath.Tests

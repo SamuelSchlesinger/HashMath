@@ -1,0 +1,37 @@
+-- Indexed inductive types
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Vectors (length-indexed lists)
+inductive Vec (A : Type) : Nat → Type where
+  | nil : Vec A Nat.zero
+  | cons : ∀ (n : Nat), A → Vec A n → Vec A (Nat.succ n)
+
+#check Vec
+#check Vec.nil
+#check Vec.cons
+
+-- Finite numbers (bounded by n)
+inductive Fin : Nat → Type where
+  | zero : ∀ (n : Nat), Fin (Nat.succ n)
+  | succ : ∀ (n : Nat), Fin n → Fin (Nat.succ n)
+
+#check Fin
+#check Fin.zero
+#check Fin.succ
+
+-- Equality (indexed by value)
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+#check Eq
+#check Eq.refl
+
+-- Accessible relation (for well-founded recursion)
+inductive Acc (A : Type) (r : A → A → Prop) : A → Prop where
+  | intro : ∀ (x : A), (∀ (y : A), r y x → Acc A r y) → Acc A r x
+
+#check Acc
+#check Acc.intro

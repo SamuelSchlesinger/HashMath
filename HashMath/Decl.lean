@@ -73,11 +73,12 @@ structure ConstructorInfo where
 /-- Information about a recursor derived from an inductive block. -/
 structure RecursorInfo where
   indHash : Hash
+  blockHash : Hash      -- hash of the inductive block (for computing mutual rec hashes)
   blkIdx : Nat
   nParams : Nat
-  nMotives : Nat
-  nMinors : Nat
-  nIndices : Nat
+  nMotives : Nat         -- = number of types in the mutual block
+  nMinors : Nat          -- = total constructors across ALL types in the block
+  nIndices : Nat         -- = indices for THIS type
   recTy : Expr
   allowsLargeElim : Bool := true  -- default to true for backward compat
   deriving Repr

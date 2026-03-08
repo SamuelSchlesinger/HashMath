@@ -4,3 +4,7 @@ defaultTargets = ["HashMath"]
 
 [[lean_lib]]
 name = "HashMath"
+
+[[lean_exe]]
+name = "hm"
+root = "HashMath.Main"

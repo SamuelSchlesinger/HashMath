@@ -82,7 +82,10 @@ def addDecl (env : Environment) (d : Decl) : Hash × Environment :=
   | _ => (h, env')
 where
   registerInductive (env : Environment) (blockHash : Hash) (block : InductiveBlock) : Environment :=
-    (List.range block.types.length).foldl (fun env i =>
+    let nTypes := block.types.length
+    let totalMinors := block.types.foldl (fun acc indTy => acc + indTy.ctors.length) 0
+    (List.range nTypes).foldl (fun (envAcc : Environment × Nat) i =>
+      let (env, globalCtorOffset) := envAcc
       let typeHash := hashIndType blockHash i
       let env := { env with indTypes := env.indTypes.insert typeHash (block, i) }
       match block.types[i]? with
@@ -96,7 +99,7 @@ where
           let ctorInfo : ConstructorInfo := {
             indHash := typeHash
             blkIdx := i
-            cIdx := j
+            cIdx := globalCtorOffset + j  -- global constructor index
             nParams := block.numParams
             nFields := nFields
             recursiveFields := recFields
@@ -108,16 +111,17 @@ where
         let nIndices := countForallE indTy.type - block.numParams
         let recInfo : RecursorInfo := {
           indHash := typeHash
+          blockHash := blockHash
           blkIdx := i
           nParams := block.numParams
-          nMotives := 1
-          nMinors := indTy.ctors.length
+          nMotives := nTypes
+          nMinors := totalMinors
           nIndices := nIndices
-          recTy := .sort .zero  -- placeholder
+          recTy := .sort .zero  -- placeholder (updated in checkDecl)
         }
-        { env with recs := env.recs.insert recHash recInfo }
-      | none => env
-    ) env
+        ({ env with recs := env.recs.insert recHash recInfo }, globalCtorOffset + indTy.ctors.length)
+      | none => (env, globalCtorOffset)
+    ) (env, 0) |>.1
   countForallE : Expr → Nat
     | .forallE _ body => 1 + countForallE body
     | _ => 0

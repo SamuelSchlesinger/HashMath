@@ -1,0 +1,4 @@
+-- Self-referencing definition (not a valid fixpoint)
+
+-- ERROR: can't refer to 'bad' in its own type (it doesn't exist yet)
+def bad : bad := bad

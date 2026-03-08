@@ -1,0 +1,8 @@
+-- Lambda domain must be a type
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- ERROR: Nat.zero is not a type, can't bind over it
+#check fun (x : Nat.zero) => x

@@ -1,0 +1,27 @@
+-- Partial application of constructors and functions
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Prod (A : Type) (B : Type) : Type where
+  | mk : A → B → Prod A B
+
+inductive List (A : Type) : Type where
+  | nil : List A
+  | cons : A → List A → List A
+
+-- Partial application of succ: it's just a function
+#check Nat.succ
+
+-- Partially applied constructor
+#check Prod.mk Nat Nat
+#check Prod.mk Nat Nat Nat.zero
+
+-- Partially applied cons
+#check List.cons Nat
+#check List.cons Nat Nat.zero
+
+-- Higher-order: map succ
+axiom List.map : ∀ (A : Type) (B : Type), (A → B) → List A → List B
+#check List.map Nat Nat Nat.succ

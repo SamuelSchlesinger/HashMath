@@ -70,51 +70,67 @@ private def stripForallE (ty : Expr) : Nat → Expr
 private def getCtorIndexArgs (retType : Expr) (nP : Nat) : List Expr :=
   retType.getAppArgs.drop nP
 
+/-- Check if a domain type matches any type in the block applied to params.
+    Returns the index of the matching type, or `none`. -/
+private def findRecTarget (domTy : Expr) (typeHashes : List Hash)
+    (univs : List Level) (nP : Nat) (extraDepth : Nat) : Option Nat :=
+  go typeHashes 0
+where
+  go : List Hash → Nat → Option Nat
+    | [], _ => none
+    | th :: rest, k =>
+      let iApplied := mkIApplied th univs nP extraDepth
+      if domTy == iApplied then some k
+      else go rest (k + 1)
+
 /-- Walk the field telescope of a constructor type (after params stripped and shifted),
     inserting IH binders for recursive fields, and producing the minor type.
+    Supports mutual inductives: recursive fields may target different types in the block.
     - `ty`: remaining field telescope
     - `depth`: number of binders entered inside this minor type so far
-    - `motiveIdx`: bvar index of motive at depth 0 of this minor type
+    - `nTypes`: number of types in the mutual block
+    - `baseOffset`: `globalMinorIdx + nTypes - 1` — motive₀ is at bvar (depth + baseOffset)
     - `nP`: number of parameters
-    - `nIndices`: number of index arguments
+    - `nIndices`: number of index arguments for the owner type
+    - `typeHashes`: hashes of all types in the block
+    - `ownerTypeIdx`: which type this constructor belongs to
     - `fieldDepths`: depths at which each field was bound (most recent first)
-    At depth `d`, motive is at `bvar (d + motiveIdx)`,
-    and param `p_i` is at `bvar (d + motiveIdx + nP - i)`.
-    At the conclusion, the minor produces
-      `motive indexArgs... (ctor params... fields...)`. -/
-private partial def processFields (ty : Expr) (depth : Nat) (motiveIdx : Nat) (nP : Nat)
-    (nIndices : Nat) (typeHash ctorHash : Hash) (univs : List Level)
-    (fieldDepths : List Nat) : Expr :=
+    At depth `d`:
+    - motive_k is at `bvar (d + baseOffset - k)`
+    - param p_i is at `bvar (d + baseOffset + nP - i)` -/
+private partial def processFields (ty : Expr) (depth : Nat)
+    (nTypes : Nat) (baseOffset : Nat) (nP : Nat) (nIndices : Nat)
+    (typeHashes : List Hash) (ctorHash : Hash) (univs : List Level)
+    (ownerTypeIdx : Nat) (fieldDepths : List Nat) : Expr :=
   match ty with
   | .forallE domTy body =>
-    -- Check if this field is recursive (type matches I applied to params at this depth)
-    let iApplied := mkIApplied typeHash univs nP (depth + motiveIdx + 1)
-    if domTy == iApplied then
-      -- Recursive field: add field binder, then IH binder
-      -- Under field binder (depth+1): motive is at bvar (depth+1+motiveIdx), field is bvar 0
-      let ihType := Expr.app (.bvar (depth + 1 + motiveIdx)) (.bvar 0)
-      -- Lift body by 1 to account for the inserted IH binder
+    -- Check if this field is recursive against any type in the block
+    match findRecTarget domTy typeHashes univs nP (depth + baseOffset + 1) with
+    | some targetIdx =>
+      -- Recursive field targeting type targetIdx
+      -- Under field binder (depth+1): motive_targetIdx is at bvar (depth+1+baseOffset-targetIdx)
+      let motiveRef := Expr.bvar (depth + 1 + baseOffset - targetIdx)
+      let ihType := Expr.app motiveRef (.bvar 0)
       let liftedBody := body.liftN 1
-      let rest := processFields liftedBody (depth + 2) motiveIdx nP
-        nIndices typeHash ctorHash univs (depth :: fieldDepths)
+      let rest := processFields liftedBody (depth + 2)
+        nTypes baseOffset nP nIndices typeHashes ctorHash univs ownerTypeIdx (depth :: fieldDepths)
       .forallE domTy (.forallE ihType rest)
-    else
+    | none =>
       -- Non-recursive field: just bind
-      let rest := processFields body (depth + 1) motiveIdx nP
-        nIndices typeHash ctorHash univs (depth :: fieldDepths)
+      let rest := processFields body (depth + 1)
+        nTypes baseOffset nP nIndices typeHashes ctorHash univs ownerTypeIdx (depth :: fieldDepths)
       .forallE domTy rest
   | _ =>
-    -- End of telescope: return motive indexArgs... (ctor params... fields...)
-    let motiveHere := Expr.bvar (depth + motiveIdx)
-    let paramArgs := (List.range nP).map (fun i => .bvar (depth + motiveIdx + nP - i))
+    -- End of telescope: return motive_owner indexArgs... (ctor params... fields...)
+    let motiveHere := Expr.bvar (depth + baseOffset - ownerTypeIdx)
+    let paramArgs := (List.range nP).map (fun i => .bvar (depth + baseOffset + nP - i))
     let fieldArgs := fieldDepths.reverse.map (fun fd => .bvar (depth - fd - 1))
     let ctorApp := Expr.mkAppN (.const ctorHash univs) (paramArgs ++ fieldArgs)
-    -- Extract index args from the constructor's return type (ty has all IH lifts applied)
     let indexArgs := getCtorIndexArgs ty nP
     Expr.mkAppN motiveHere (indexArgs ++ [ctorApp])
 
 /-- Walk a type's forallE binders to find the trailing Sort level. -/
-private def getTargetSort : Expr → Option Level
+def getTargetSort : Expr → Option Level
   | .sort l => some l
   | .forallE _ body => getTargetSort body
   | _ => none
@@ -159,101 +175,106 @@ private def computeAllowsLargeElim (block : InductiveBlock) (typeIdx : Nat) : Bo
       | _ => false              -- 2+ constructors: no large elim
     | _ => true                 -- non-Prop: large elim OK
 
-/-- Generate the type of the recursor for a single, non-mutual inductive type.
-    Supports both non-indexed and indexed inductives.
+/-- Collect minor types for all constructors across all types in the block. -/
+private def collectAllMinors (block : InductiveBlock) (blockHash : Hash) (univs : List Level)
+    (nP nT : Nat) (typeHashes : List Hash) : List Expr :=
+  go block.types 0 0
+where
+  go : List InductiveType → Nat → Nat → List Expr
+    | [], _, _ => []
+    | indTy :: rest, i, globalCtorOffset =>
+      let nIdx_i := countForallE indTy.type - nP
+      let ctorMinors := (List.range indTy.ctors.length).map fun j =>
+        let g := globalCtorOffset + j
+        let rawCtorTy := match indTy.ctors[j]? with | some t => t | none => .sort .zero
+        let ctorTy := Environment.resolveIRef blockHash rawCtorTy
+        let ctorHash := hashCtor blockHash i j
+        let stripped := stripForallE ctorTy nP
+        let lifted := stripped.liftN (nT + g)
+        let baseOffset := g + nT - 1
+        processFields lifted 0 nT baseOffset nP nIdx_i typeHashes ctorHash univs i []
+      ctorMinors ++ go rest (i + 1) (globalCtorOffset + indTy.ctors.length)
+
+/-- Generate the type of the recursor for a type in an inductive block.
+    Supports mutual inductives: the recursor has one motive per type in the block,
+    and minors for ALL constructors across ALL types.
     The binder layout is:
-      `Π (params...) (motive : Π (indices...) (x : I params indices). Sort v)
-         (minor₀...) (indices...) (major : I params indices). motive indices major`
-    When nIndices = 0, this reduces to the non-indexed case.
-    Recursive fields get an extra IH argument in their minor type.
-    When `allowsLargeElim` is false, the motive target is Sort 0 (Prop only). -/
+      `Π (params...) (C₀ : ...) ... (C_{n-1} : ...) (minor₀...) ... (indices...) (major). C_target indices major`
+    Recursive fields get an extra IH argument using the motive for their target type.
+    When `allowsLargeElim` is false, all motive targets are Sort 0 (Prop only). -/
 def generateRecursorType (block : InductiveBlock) (typeIdx : Nat) (blockHash : Hash) (allowsLargeElim : Bool := true) : Expr :=
   match block.types[typeIdx]? with
   | none => .sort .zero
-  | some indTy =>
+  | some targetIndTy =>
     let nP := block.numParams
     let nU := block.numUnivParams
-    let nC := indTy.ctors.length
-    let nIdx := countForallE indTy.type - nP
-    let typeHash := hashIndType blockHash typeIdx
+    let nT := block.types.length
+    let nTargetIdx := countForallE targetIndTy.type - nP
     let univs := (List.range nU).map Level.param
-    -- The recursor has one extra universe param for the motive target
-    -- When large elimination is restricted, the motive can only target Prop (Sort 0)
     let motiveUniv := if allowsLargeElim then Level.param nU else Level.zero
 
-    -- Parameter binder types (from the type former)
-    let paramBinderTypes := extractDomains indTy.type nP
+    -- Type hashes for all types in the block
+    let typeHashes := (List.range nT).map (fun i => hashIndType blockHash i)
 
-    -- Index binder domain types from the type former (after stripping params)
-    let indexDomainsInTypeFormer := extractDomains (stripForallE indTy.type nP) nIdx
+    -- Parameter binder types (shared by all types, taken from target type former)
+    let paramBinderTypes := extractDomains targetIndTy.type nP
 
-    -- Motive type: Π (indices...) (x : I params indices). Sort motiveUniv
-    -- Under nP param binders:
-    -- Build from inside out: innermost is Sort motiveUniv
-    -- Then bind x : I params indices (under nIdx index binders inside the motive)
-    -- Then bind each index
-    let iAppliedInMotive := Expr.mkAppN
-      (mkIApplied typeHash univs nP nIdx)
-      ((List.range nIdx).map (fun k => .bvar (nIdx - 1 - k)))
-    let motiveInner := Expr.forallE iAppliedInMotive (.sort motiveUniv)
-    -- Fold index binders from inside out
-    let motiveType := indexDomainsInTypeFormer.foldr
-      (fun domTy acc => .forallE domTy acc) motiveInner
+    -- Motive types: one per type in the block
+    -- motiveType_k is lifted by k to account for the k earlier motive binders
+    let motiveTypes := (List.range nT).map fun k =>
+      let indTy_k := match block.types[k]? with | some t => t | none => { type := .sort .zero, ctors := [] }
+      let nIdx_k := countForallE indTy_k.type - nP
+      let indexDomains_k := extractDomains (stripForallE indTy_k.type nP) nIdx_k
+      let typeHash_k := typeHashes[k]!
+      let iAppliedInMotive := Expr.mkAppN
+        (mkIApplied typeHash_k univs nP nIdx_k)
+        ((List.range nIdx_k).map (fun j => .bvar (nIdx_k - 1 - j)))
+      let motiveInner := Expr.forallE iAppliedInMotive (.sort motiveUniv)
+      let rawMotiveType := indexDomains_k.foldr (fun domTy acc => .forallE domTy acc) motiveInner
+      rawMotiveType.liftN k
 
-    -- Minor types: one per constructor
-    let minorTypes := (List.range nC).map fun j =>
-      let rawCtorTy := match indTy.ctors[j]? with | some t => t | none => .sort .zero
-      let ctorTy := Environment.resolveIRef blockHash rawCtorTy
-      let ctorHash := hashCtor blockHash typeIdx j
-      -- Strip param binders, lift by (j+1) to align with recursor context
-      -- At minor_j position (under nP+1+j binders), motive is at bvar j
-      let stripped := stripForallE ctorTy nP
-      let lifted := stripped.liftN (j + 1)
-      processFields lifted 0 j nP nIdx typeHash ctorHash univs []
+    -- Minor types for all constructors across all types
+    let minorTypes := collectAllMinors block blockHash univs nP nT typeHashes
+    let totalMinors := minorTypes.length
 
-    -- Index binder types for the recursor (between minors and major)
-    -- These are the same domains from the type former, but lifted by (1 + nC)
-    -- to account for the motive and minor binders inserted between params and indices
-    let indexBinderTypes := indexDomainsInTypeFormer.map (fun domTy => domTy.liftN (1 + nC))
+    -- Index binder types for the target type (between minors and major)
+    let indexDomainsInTypeFormer := extractDomains (stripForallE targetIndTy.type nP) nTargetIdx
+    let indexBinderTypes := indexDomainsInTypeFormer.map (fun domTy => domTy.liftN (nT + totalMinors))
 
-    -- Major type: I applied to params and index bvars
-    -- Under nP + 1 + nC + nIdx binders
+    -- Major type: I_target applied to params and index bvars
+    let targetTypeHash := typeHashes[typeIdx]!
     let majorType := Expr.mkAppN
-      (mkIApplied typeHash univs nP (1 + nC + nIdx))
-      ((List.range nIdx).map (fun k => .bvar (nIdx - 1 - k)))
+      (mkIApplied targetTypeHash univs nP (nT + totalMinors + nTargetIdx))
+      ((List.range nTargetIdx).map (fun k => .bvar (nTargetIdx - 1 - k)))
 
-    -- Result body: motive indices major
-    -- Under nP + 1 + nC + nIdx + 1 binders:
-    -- bvar 0 = major
-    -- bvar k (for 1 ≤ k ≤ nIdx) = index (nIdx - k)
-    -- bvar (nIdx + nC + 1) = motive
-    let motiveInResult := Expr.bvar (nIdx + nC + 1)
-    let indexBvarsInResult := (List.range nIdx).map (fun k => Expr.bvar (nIdx - k))
+    -- Result body: C_target indices major
+    -- C_k is at bvar (nTargetIdx + totalMinors + nT - k) from the result position
+    let motiveInResult := Expr.bvar (nTargetIdx + totalMinors + nT - typeIdx)
+    let indexBvarsInResult := (List.range nTargetIdx).map (fun k => Expr.bvar (nTargetIdx - k))
     let resultBody := Expr.mkAppN motiveInResult (indexBvarsInResult ++ [.bvar 0])
 
     -- Assemble: fold from inside out
     let innermost := Expr.forallE majorType resultBody
-    -- Add index binders (fold from inside out)
     let withIndices := indexBinderTypes.foldr (fun idxTy acc => .forallE idxTy acc) innermost
     let withMinors := minorTypes.foldr (fun minorTy acc => .forallE minorTy acc) withIndices
-    let withMotive := Expr.forallE motiveType withMinors
-    paramBinderTypes.foldr (fun paramTy acc => .forallE paramTy acc) withMotive
+    let withMotives := motiveTypes.foldr (fun motTy acc => .forallE motTy acc) withMinors
+    paramBinderTypes.foldr (fun paramTy acc => .forallE paramTy acc) withMotives
 
 /-- Generate RecursorInfo for a type in an inductive block. -/
 def generateRecursorInfo (block : InductiveBlock) (typeIdx : Nat) (blockHash : Hash) : RecursorInfo :=
   let typeHash := hashIndType blockHash typeIdx
+  let nT := block.types.length
   let nIndices := match block.types[typeIdx]? with
     | some indTy => countForallE indTy.type - block.numParams
     | none => 0
-  let nMinors := match block.types[typeIdx]? with
-    | some indTy => indTy.ctors.length
-    | none => 0
+  let totalMinors := block.types.foldl (fun acc indTy => acc + indTy.ctors.length) 0
   let largeElim := computeAllowsLargeElim block typeIdx
   { indHash := typeHash
+    blockHash := blockHash
     blkIdx := typeIdx
     nParams := block.numParams
-    nMotives := 1
-    nMinors := nMinors
+    nMotives := nT
+    nMinors := totalMinors
     nIndices := nIndices
     recTy := generateRecursorType block typeIdx blockHash largeElim
     allowsLargeElim := largeElim }
@@ -303,35 +324,11 @@ where
           go body (depth + 1)
     | _ => true
 
-/-- Check universe constraints on constructor fields.
-    For each field after `numParams` leading binders, if the domain type
-    is a `Sort l` (i.e. the field is type-valued), check that `l ≤ targetLevel`.
-    This prevents e.g. a `Sort 1` field in a `Sort 0` inductive. -/
-private def checkFieldUniverses (ctorTy : Expr) (numParams : Nat) (targetLevel : Level) : Except String Unit :=
-  go ctorTy 0
-where
-  go (ty : Expr) (depth : Nat) : Except String Unit :=
-    match ty with
-    | .forallE domTy body =>
-      if depth < numParams then
-        go body (depth + 1)
-      else
-        match getTargetSort domTy with
-        | some fieldLevel =>
-          match fieldLevel.normalize.leq targetLevel.normalize with
-          | some true => go body (depth + 1)
-          | some false =>
-            throw s!"checkInductiveBlock: field universe Sort {repr fieldLevel} exceeds target Sort {repr targetLevel}"
-          | none => go body (depth + 1)  -- skip check for polymorphic levels
-        | none => go body (depth + 1)
-    | _ => .ok ()
-
 /-- Check that an inductive block is well-formed.
     Checks:
     1. Type formers end in a Sort
     2. Constructor return types are consistent
-    3. Strict positivity of inductive occurrences in constructor arguments
-    4. Universe constraints: type-valued fields must live in a universe ≤ the target -/
+    3. Strict positivity of inductive occurrences in constructor arguments -/
 def checkInductiveBlock (_env : Environment) (block : InductiveBlock) : Except String Unit := do
   -- Use type indices for positivity checking (pre-resolution, using iref)
   let indIndices := List.range block.types.length
@@ -351,12 +348,6 @@ def checkInductiveBlock (_env : Environment) (block : InductiveBlock) : Except S
       match (getResultType ctorTy).getAppFn with
       | .iref _ _ => pure ()
       | _ => throw "checkInductiveBlock: constructor must return its inductive type"
-    -- Check universe constraints on type-valued fields
-    let targetLevel := match getTargetSort indTy.type with
-      | some l => l
-      | none => Level.zero
-    for ctorTy in indTy.ctors do
-      checkFieldUniverses ctorTy block.numParams targetLevel
   return ()
 where
   endsInSort : Expr → Bool

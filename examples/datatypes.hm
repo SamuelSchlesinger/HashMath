@@ -1,0 +1,42 @@
+-- Parameterized data types
+
+-- Option/Maybe
+inductive Option (A : Type) : Type where
+  | none : Option A
+  | some : A → Option A
+
+-- Pairs
+inductive Prod (A : Type) (B : Type) : Type where
+  | mk : A → B → Prod A B
+
+-- Disjoint union
+inductive Sum (A : Type) (B : Type) : Type where
+  | inl : A → Sum A B
+  | inr : B → Sum A B
+
+-- Lists
+inductive List (A : Type) : Type where
+  | nil : List A
+  | cons : A → List A → List A
+
+-- Binary trees
+inductive Tree (A : Type) : Type where
+  | leaf : Tree A
+  | node : Tree A → A → Tree A → Tree A
+
+#check Option
+#check Prod
+#check Sum
+#check List
+#check Tree
+
+-- Constructors
+#check Option.some
+#check Option.none
+#check Prod.mk
+#check Sum.inl
+#check Sum.inr
+#check List.nil
+#check List.cons
+#check Tree.leaf
+#check Tree.node

@@ -1,0 +1,23 @@
+-- Large elimination: recursor generation for Prop types
+
+-- Prop with 2+ constructors: recursor restricted to Prop
+inductive PropOr (P : Prop) (Q : Prop) : Prop where
+  | inl : P → PropOr P Q
+  | inr : Q → PropOr P Q
+
+-- The recursor should have motive targeting Prop (Sort 0), not Type
+#check PropOr
+#check PropOr.rec
+
+-- Prop with 1 constructor: large elimination allowed
+inductive PropAnd (P : Prop) (Q : Prop) : Prop where
+  | intro : P → Q → PropAnd P Q
+
+#check PropAnd
+#check PropAnd.rec
+
+-- Prop with 0 constructors: large elimination allowed
+inductive PropFalse : Prop where
+
+#check PropFalse
+#check PropFalse.rec

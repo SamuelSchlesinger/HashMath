@@ -1,0 +1,45 @@
+-- Basic types and functions
+
+-- Booleans
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+-- Natural numbers
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Unit
+inductive Unit : Type where
+  | unit : Unit
+
+-- Empty type (no constructors)
+inductive Empty : Type where
+
+-- Identity function
+def id : ∀ (A : Type), A → A := fun (A : Type) (x : A) => x
+
+-- Constant function
+def const : ∀ (A : Type) (B : Type), A → B → A :=
+  fun (A : Type) (B : Type) (x : A) (y : B) => x
+
+-- Function composition
+def compose : ∀ (A : Type) (B : Type) (C : Type), (B → C) → (A → B) → A → C :=
+  fun (A : Type) (B : Type) (C : Type) (f : B → C) (g : A → B) (x : A) => f (g x)
+
+-- Function application
+def apply : ∀ (A : Type) (B : Type), (A → B) → A → B :=
+  fun (A : Type) (B : Type) (f : A → B) (x : A) => f x
+
+-- Flip arguments
+def flip : ∀ (A : Type) (B : Type) (C : Type), (A → B → C) → B → A → C :=
+  fun (A : Type) (B : Type) (C : Type) (f : A → B → C) (b : B) (a : A) => f a b
+
+#check id
+#check const
+#check compose
+#check apply
+#check flip
+#check id Nat
+#check id Bool

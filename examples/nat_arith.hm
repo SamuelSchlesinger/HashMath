@@ -1,0 +1,44 @@
+-- Natural number arithmetic (axiomatized)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Equality
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-- Arithmetic operations wrapped in newtypes to get distinct hashes
+-- (In content-addressed systems, axioms with identical types share hashes)
+inductive Add : Type where
+  | mk : (Nat → Nat → Nat) → Add
+
+inductive Mul : Type where
+  | mk : (Nat → Nat → Nat) → Mul
+
+-- Axiomatize the operations extracted from their wrappers
+axiom getAdd : Add → Nat → Nat → Nat
+axiom getMul : Mul → Nat → Nat → Nat
+
+-- Alternatively, use definitional axioms with unique types:
+axiom Nat.add : Nat → Nat → Nat
+axiom Nat.pred : Nat → Nat
+
+-- Less-than-or-equal
+inductive Nat.le : Nat → Nat → Prop where
+  | refl : ∀ (n : Nat), Nat.le n n
+  | step : ∀ (n : Nat) (m : Nat), Nat.le n m → Nat.le n (Nat.succ m)
+
+-- Some basic axioms about addition
+axiom Nat.add_zero : ∀ (n : Nat), Eq Nat (Nat.add n Nat.zero) n
+axiom Nat.zero_add : ∀ (n : Nat), Eq Nat (Nat.add Nat.zero n) n
+axiom Nat.add_succ : ∀ (n : Nat) (m : Nat), Eq Nat (Nat.add n (Nat.succ m)) (Nat.succ (Nat.add n m))
+axiom Nat.succ_add : ∀ (n : Nat) (m : Nat), Eq Nat (Nat.add (Nat.succ n) m) (Nat.succ (Nat.add n m))
+axiom Nat.add_comm : ∀ (n : Nat) (m : Nat), Eq Nat (Nat.add n m) (Nat.add m n)
+axiom Nat.add_assoc : ∀ (a : Nat) (b : Nat) (c : Nat), Eq Nat (Nat.add (Nat.add a b) c) (Nat.add a (Nat.add b c))
+
+#check Nat.le
+#check Nat.add_zero
+#check Nat.add_succ
+#check Nat.add_comm
+#check Nat.add_assoc

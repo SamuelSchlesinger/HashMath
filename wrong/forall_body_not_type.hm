@@ -1,0 +1,8 @@
+-- Forall body must be a type (Sort)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- ERROR: The body of the forall is Nat.zero, which is not a type
+def bad : ∀ (n : Nat), Nat.zero := fun (n : Nat) => Nat.zero

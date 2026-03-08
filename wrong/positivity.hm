@@ -1,0 +1,5 @@
+-- Strict positivity violation
+
+-- ERROR: T occurs negatively in (T → T) → T
+inductive Bad : Type where
+  | mk : (Bad → Bad) → Bad

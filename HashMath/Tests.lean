@@ -3,6 +3,7 @@
 -/
 
 import HashMath.TypeChecker
+import HashMath.Elab
 
 namespace HashMath.Tests
 
@@ -888,38 +889,57 @@ private def byteArrayToHex (bs : ByteArray) : String :=
   let sort0 := Expr.sort Level.zero
   let sort1 := Expr.sort (Level.succ Level.zero)
 
-  -- Sort 0 inductive with Sort 1 field → should be rejected
-  -- inductive Bad : Sort 0 where
-  --   | mk : Sort 1 → Bad
-  let badBlock : InductiveBlock := {
+  -- Sort 0 (Prop) inductive with Sort 1 field → should be ACCEPTED (Prop is impredicative)
+  -- inductive PropWithType : Prop where
+  --   | mk : Type → PropWithType
+  -- (Soundness comes from large elimination restrictions, not universe constraints)
+  let propWithTypeBlock : InductiveBlock := {
     numUnivParams := 0
     numParams := 0
     types := [{
       type := sort0
+      ctors := [
+        Expr.forallE sort1 (.iref 0 [])  -- mk : Sort 1 → PropWithType
+      ]
+    }]
+  }
+  match checkDecl env (.inductive propWithTypeBlock) with
+  | .ok _ => IO.println "Impredicative Prop (Sort 1 field in Sort 0 type) accepted: OK"
+  | .error e => IO.println s!"Impredicative Prop FAIL (should accept): {e}"
+
+  -- Sort 1 inductive with Sort 1 field → should be REJECTED (Sort 1 : Sort 2 > Sort 1)
+  -- inductive Bad : Type where
+  --   | mk : Type → Bad
+  let badBlock : InductiveBlock := {
+    numUnivParams := 0
+    numParams := 0
+    types := [{
+      type := sort1
       ctors := [
         Expr.forallE sort1 (.iref 0 [])  -- mk : Sort 1 → Bad
       ]
     }]
   }
   match checkDecl env (.inductive badBlock) with
-  | .error _ => IO.println "Universe constraint (Sort 1 field in Sort 0 type) rejected: OK"
+  | .error _ => IO.println "Universe constraint (Sort 1 field in Sort 1 type) rejected: OK"
   | .ok _ => IO.println "Universe constraint NOT enforced: FAIL"
 
-  -- Sort 1 inductive with Sort 1 field → should be accepted
-  -- inductive Ok : Sort 1 where
+  -- Sort 2 inductive with Sort 1 field → should be accepted (Sort 1 : Sort 2 ≤ Sort 2)
+  -- inductive Ok : Sort 2 where
   --   | mk : Sort 1 → Ok
+  let sort2 := Expr.sort (Level.succ (Level.succ Level.zero))
   let okBlock : InductiveBlock := {
     numUnivParams := 0
     numParams := 0
     types := [{
-      type := sort1
+      type := sort2
       ctors := [
         Expr.forallE sort1 (.iref 0 [])  -- mk : Sort 1 → Ok
       ]
     }]
   }
   match checkDecl env (.inductive okBlock) with
-  | .ok _ => IO.println "Universe constraint (Sort 1 field in Sort 1 type) accepted: OK"
+  | .ok _ => IO.println "Universe constraint (Sort 1 field in Sort 2 type) accepted: OK"
   | .error e => IO.println s!"Universe constraint acceptance FAIL: {e}"
 
   -- Sort 1 inductive with Sort 0 field → should be accepted (Sort 0 ≤ Sort 1)
@@ -1136,6 +1156,202 @@ private def byteArrayToHex (bs : ByteArray) : String :=
     | _ =>
       IO.println s!"Quot.mk type shape FAIL: {repr ty}"
 
+-- ============================================================
+-- 31. Mutual inductive types: Even/Odd
+-- ============================================================
+
+#eval do
+  let env := Environment.empty
+  let sort1 := Expr.sort (Level.succ Level.zero)
+
+  -- mutual
+  --   inductive MyEven : Type where
+  --     | zero : MyEven
+  --     | succOdd : MyOdd → MyEven
+  --   inductive MyOdd : Type where
+  --     | succEven : MyEven → MyOdd
+  -- end
+  let mutualBlock : InductiveBlock := {
+    numUnivParams := 0
+    numParams := 0
+    types := [
+      { type := sort1  -- MyEven : Type
+        ctors := [
+          .iref 0 [],                          -- zero : MyEven
+          .forallE (.iref 1 []) (.iref 0 [])   -- succOdd : MyOdd → MyEven
+        ] },
+      { type := sort1  -- MyOdd : Type
+        ctors := [
+          .forallE (.iref 0 []) (.iref 1 [])   -- succEven : MyEven → MyOdd
+        ] }
+    ]
+  }
+  match checkDecl env (.inductive mutualBlock) with
+  | .error e => IO.println s!"Mutual Even/Odd FAIL: {e}"
+  | .ok (blockHash, env') =>
+    IO.println "Mutual Even/Odd: added OK"
+    let evenHash := hashIndType blockHash 0
+    let oddHash := hashIndType blockHash 1
+    let zeroHash := hashCtor blockHash 0 0
+    let succOddHash := hashCtor blockHash 0 1
+    let succEvenHash := hashCtor blockHash 1 0
+    let evenRecHash := hashRec blockHash 0
+    let oddRecHash := hashRec blockHash 1
+
+    -- Check type registration
+    match env'.getInductiveBlockForType evenHash with
+    | some _ => IO.println "  MyEven type registered: OK"
+    | none => IO.println "  MyEven type NOT registered: FAIL"
+    match env'.getInductiveBlockForType oddHash with
+    | some _ => IO.println "  MyOdd type registered: OK"
+    | none => IO.println "  MyOdd type NOT registered: FAIL"
+
+    -- Check constructor info
+    match env'.getConstructorInfo zeroHash with
+    | some info =>
+      if info.cIdx == 0 then IO.println "  zero (global cIdx=0): OK"
+      else IO.println s!"  zero cIdx FAIL: {info.cIdx}"
+    | none => IO.println "  zero ctor NOT found: FAIL"
+    match env'.getConstructorInfo succOddHash with
+    | some info =>
+      if info.cIdx == 1 then IO.println "  succOdd (global cIdx=1): OK"
+      else IO.println s!"  succOdd cIdx FAIL: {info.cIdx}"
+    | none => IO.println "  succOdd ctor NOT found: FAIL"
+    match env'.getConstructorInfo succEvenHash with
+    | some info =>
+      if info.cIdx == 2 then IO.println "  succEven (global cIdx=2): OK"
+      else IO.println s!"  succEven cIdx FAIL: {info.cIdx}"
+    | none => IO.println "  succEven ctor NOT found: FAIL"
+
+    -- Check recursor info
+    match env'.getRecursorInfo evenRecHash with
+    | some recInfo =>
+      if recInfo.nMotives == 2 && recInfo.nMinors == 3 then
+        IO.println s!"  Even.rec info (nMotives=2, nMinors=3): OK"
+      else
+        IO.println s!"  Even.rec info FAIL: nMotives={recInfo.nMotives} nMinors={recInfo.nMinors}"
+    | none => IO.println "  Even.rec NOT found: FAIL"
+
+    -- Test ι-reduction: Even.rec cE cO mZero mSuccOdd mSuccEven (zero) → mZero
+    let cE := Expr.sort Level.zero  -- placeholder motive for Even
+    let cO := Expr.sort Level.zero  -- placeholder motive for Odd
+    let mZero := Expr.sort (Level.succ Level.zero)           -- minor for zero
+    let mSuccOdd := Expr.sort (Level.succ (Level.succ Level.zero))  -- minor for succOdd
+    let mSuccEven := Expr.sort (Level.succ (Level.succ (Level.succ Level.zero))) -- minor for succEven
+    let zeroVal := Expr.const zeroHash []
+    let recApp := Expr.mkAppN (Expr.const evenRecHash [Level.succ Level.zero])
+                    [cE, cO, mZero, mSuccOdd, mSuccEven, zeroVal]
+    let result := whnf env' recApp
+    if result == mZero then
+      IO.println "  ι-reduction (Even.rec ... zero → mZero): OK"
+    else
+      IO.println s!"  ι-reduction FAIL: {repr result}"
+
+    -- Test ι-reduction: Even.rec ... (succOdd (succEven zero))
+    -- succOdd (succEven zero) is a constructor app of Even
+    -- Should reduce to: mSuccOdd (succEven zero) (Odd.rec ... (succEven zero))
+    let seZ := Expr.app (Expr.const succEvenHash []) zeroVal     -- succEven zero
+    let soSeZ := Expr.app (Expr.const succOddHash []) seZ         -- succOdd (succEven zero)
+    let recApp2 := Expr.mkAppN (Expr.const evenRecHash [Level.succ Level.zero])
+                    [cE, cO, mZero, mSuccOdd, mSuccEven, soSeZ]
+    let result2 := whnf env' recApp2
+    -- The result should involve mSuccOdd applied to the field and IH
+    -- mSuccOdd takes: field (seZ), IH (Odd.rec cE cO mZero mSuccOdd mSuccEven seZ)
+    let expectedIH := Expr.mkAppN (Expr.const oddRecHash [Level.succ Level.zero])
+                        [cE, cO, mZero, mSuccOdd, mSuccEven, seZ]
+    let expected2 := Expr.mkAppN mSuccOdd [seZ, expectedIH]
+    if result2 == expected2 then
+      IO.println "  ι-reduction (Even.rec ... (succOdd (succEven zero)) → mSuccOdd ...): OK"
+    else
+      IO.println s!"  ι-reduction nested FAIL: {repr result2}"
+
+-- ============================================================
+-- 32. Natural number arithmetic: succ(succ(zero)) + succ(zero) = succ(succ(succ(zero)))
+-- ============================================================
+
+#eval do
+  let env := Environment.empty
+  let sort1 := Expr.sort (Level.succ Level.zero)
+
+  -- Define Nat
+  let natBlock : InductiveBlock := {
+    numUnivParams := 0
+    numParams := 0
+    types := [{
+      type := sort1
+      ctors := [
+        .iref 0 [],                          -- zero : Nat
+        .forallE (.iref 0 []) (.iref 0 [])   -- succ : Nat → Nat
+      ]
+    }]
+  }
+  let (.ok (natHash, env)) := checkDecl env (.inductive natBlock) | IO.println "Nat FAIL"; return
+  let natTypeHash := hashIndType natHash 0
+  let zeroHash := hashCtor natHash 0 0
+  let succHash := hashCtor natHash 0 1
+  let recHash := hashRec natHash 0
+  let zero := Expr.const zeroHash []
+  let succ (n : Expr) := Expr.app (.const succHash []) n
+  let one := succ zero
+  let two := succ one
+  let three := succ two
+
+  -- Define add : Nat → Nat → Nat
+  -- add m n = Nat.rec (motive := λ _. Nat) n (λ _ ih. succ ih) m
+  let motive := Expr.lam (.const natTypeHash []) (.const natTypeHash [])
+  let minor_zero := Expr.bvar 0  -- n (the second arg, bound outside)
+  let minor_succ := Expr.lam (.const natTypeHash []) (Expr.lam (.const natTypeHash []) (succ (.bvar 0)))
+
+  -- add = λ (m : Nat) (n : Nat). Nat.rec motive n (λ _ ih. succ ih) m
+  let addBody := Expr.mkAppN (.const recHash [Level.succ Level.zero])
+    [motive, .bvar 0, minor_succ, .bvar 1]  -- motive, minor_zero=n, minor_succ, major=m
+  let addVal := Expr.lam (.const natTypeHash []) (Expr.lam (.const natTypeHash []) addBody)
+  let addTy := Expr.forallE (.const natTypeHash []) (Expr.forallE (.const natTypeHash []) (.const natTypeHash []))
+
+  let (.ok (addHash, env)) := checkDecl env (.definition 0 addTy addVal)
+    | IO.println "add def FAIL"
+      return
+
+  -- Test: add 2 1 = 3
+  let add21 := Expr.mkAppN (.const addHash []) [two, one]
+  let result := whnf env add21
+  if isDefEqClosed env result three then
+    IO.println "Nat arithmetic: add 2 1 = 3: OK"
+  else
+    IO.println s!"Nat arithmetic: add 2 1 = 3 FAIL: {repr result}"
+
+  -- Test: add 0 n = n (symbolic, where n = succ zero)
+  let add0_1 := Expr.mkAppN (.const addHash []) [zero, one]
+  let result2 := whnf env add0_1
+  if isDefEqClosed env result2 one then
+    IO.println "Nat arithmetic: add 0 1 = 1: OK"
+  else
+    IO.println s!"Nat arithmetic: add 0 1 FAIL: {repr result2}"
+
+  -- Define: theorem add_zero_right : Π (n : Nat). add n zero = n
+  -- This needs Eq, so let's define it first
+  -- Actually, let's just verify add computes correctly for several values
+  let add31 := Expr.mkAppN (.const addHash []) [three, one]
+  let result3 := whnf env add31
+  let four := succ three
+  if isDefEqClosed env result3 four then
+    IO.println "Nat arithmetic: add 3 1 = 4: OK"
+  else
+    IO.println s!"Nat arithmetic: add 3 1 = 4 FAIL: {repr result3}"
+
+  let add00 := Expr.mkAppN (.const addHash []) [zero, zero]
+  let result4 := whnf env add00
+  if isDefEqClosed env result4 zero then
+    IO.println "Nat arithmetic: add 0 0 = 0: OK"
+  else
+    IO.println s!"Nat arithmetic: add 0 0 = 0 FAIL: {repr result4}"
+
 #eval IO.println "\n=== All tests executed ==="
+
+-- ============================================================
+-- Parser/Elaborator test
+-- ============================================================
+
+-- Parser/elaborator tests moved to CLI binary due to #eval stack limits
 
 end HashMath.Tests

@@ -1,0 +1,41 @@
+-- Typeclass-style structures (encoded as records/axioms)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+inductive False : Prop where
+
+-- Negation
+def Not : Prop → Prop := fun (P : Prop) => P → False
+
+-- A "Monoid" is: carrier, op, unit
+inductive Monoid (M : Type) : Type where
+  | mk : (M → M → M) → M → Monoid M
+
+-- Decidable proposition
+inductive Decidable (P : Prop) : Type where
+  | yes : P → Decidable P
+  | no : (P → False) → Decidable P
+
+-- Functor-like structure (axiomatized)
+axiom Functor : (Type → Type) → Type
+
+-- Applicative
+axiom Applicative : (Type → Type) → Type
+
+-- Monad
+axiom MonadClass : (Type → Type) → Type
+
+#check Monoid
+#check Decidable
+#check Functor
+#check Applicative
+#check MonadClass

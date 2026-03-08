@@ -1,0 +1,13 @@
+-- Constructor return type doesn't match the inductive type
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+-- ERROR: constructor claims to return Nat, but should return Bad
+inductive Bad : Type where
+  | mk : Nat → Nat

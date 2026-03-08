@@ -1,0 +1,4 @@
+-- Reference to undefined names
+
+-- ERROR: unknown variable 'Foo'
+#check Foo

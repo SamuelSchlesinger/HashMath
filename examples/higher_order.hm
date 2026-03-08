@@ -1,0 +1,34 @@
+-- Higher-order functions and church encodings
+
+-- Church booleans (as functions)
+def ChurchBool : Type 1 := ∀ (R : Type), R → R → R
+
+def ctrue : ChurchBool := fun (R : Type) (t : R) (f : R) => t
+def cfalse : ChurchBool := fun (R : Type) (t : R) (f : R) => f
+
+-- Church numerals
+def ChurchNat : Type 1 := ∀ (R : Type), (R → R) → R → R
+
+def czero : ChurchNat := fun (R : Type) (s : R → R) (z : R) => z
+def cone : ChurchNat := fun (R : Type) (s : R → R) (z : R) => s z
+def ctwo : ChurchNat := fun (R : Type) (s : R → R) (z : R) => s (s z)
+
+def csucc : ChurchNat → ChurchNat :=
+  fun (n : ChurchNat) (R : Type) (s : R → R) (z : R) => s (n R s z)
+
+def cadd : ChurchNat → ChurchNat → ChurchNat :=
+  fun (m : ChurchNat) (n : ChurchNat) (R : Type) (s : R → R) (z : R) => m R s (n R s z)
+
+def cmul : ChurchNat → ChurchNat → ChurchNat :=
+  fun (m : ChurchNat) (n : ChurchNat) (R : Type) (s : R → R) (z : R) => m R (n R s) z
+
+#check ChurchBool
+#check ctrue
+#check cfalse
+#check ChurchNat
+#check czero
+#check cone
+#check ctwo
+#check csucc
+#check cadd
+#check cmul

@@ -1,0 +1,8 @@
+-- Using a term where a type is expected
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- ERROR: Nat.zero is not a type, can't use it as a function domain
+def bad : Nat.zero → Nat := fun (x : Nat.zero) => x

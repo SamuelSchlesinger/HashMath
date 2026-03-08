@@ -1,0 +1,28 @@
+-- Let expressions
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Simple let binding
+def two : Nat := let one : Nat := Nat.succ Nat.zero in Nat.succ one
+
+#check two
+
+-- Nested let bindings
+def four : Nat :=
+  let one : Nat := Nat.succ Nat.zero in
+  let two : Nat := Nat.succ one in
+  let three : Nat := Nat.succ two in
+  Nat.succ three
+
+#check four
+
+-- Let in a function body
+def addTwo : Nat → Nat :=
+  fun (n : Nat) =>
+    let one : Nat := Nat.succ Nat.zero in
+    let nPlusOne : Nat := Nat.succ n in
+    Nat.succ nPlusOne
+
+#check addTwo

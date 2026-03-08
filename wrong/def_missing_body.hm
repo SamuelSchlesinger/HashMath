@@ -1,0 +1,8 @@
+-- Parse error: definition without body
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- ERROR: missing := and value
+def bad : Nat

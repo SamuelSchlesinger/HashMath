@@ -47,7 +47,7 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
   match e with
   | .bvar i =>
     match ctx[i]? with
-    | some ty => .ok ty
+    | some ty => .ok (ty.liftN (i + 1))
     | none => .error s!"inferType: bound variable index {i} out of range (context size {ctx.length})"
   | .sort l => .ok (.sort (.succ l))
   | .const h univs =>

@@ -1,0 +1,8 @@
+-- Natural numbers
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+#check Nat
+#check Nat.zero
+#check Nat.succ

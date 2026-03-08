@@ -1,0 +1,12 @@
+-- Type mismatch: applying a function to the wrong type
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+-- ERROR: Nat.succ expects Nat, but gets Bool
+#check Nat.succ Bool.true

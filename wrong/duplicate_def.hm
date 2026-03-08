@@ -1,0 +1,13 @@
+-- Defining the same name twice should be okay (names are labels over hashes)
+-- But the second definition should be independent
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- This should work, the name just rebinds
+axiom A : Type
+axiom A : Nat
+
+-- ERROR: now A refers to Nat, not Type, so this should fail
+def bad : A → Type := fun (x : A) => A

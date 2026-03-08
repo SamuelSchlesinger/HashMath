@@ -1,0 +1,24 @@
+-- Equality and its properties
+
+-- Equality (indexed inductive)
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-- Symmetry (axiomatized - would need recursor)
+axiom Eq.symm : ∀ (A : Type) (a : A) (b : A), Eq A a b → Eq A b a
+
+-- Transitivity
+axiom Eq.trans : ∀ (A : Type) (a : A) (b : A) (c : A), Eq A a b → Eq A b c → Eq A a c
+
+-- Congruence
+axiom Eq.congr : ∀ (A : Type) (B : Type) (f : A → B) (a : A) (b : A), Eq A a b → Eq B (f a) (f b)
+
+-- Leibniz substitution
+axiom Eq.subst : ∀ (A : Type) (P : A → Prop) (a : A) (b : A), Eq A a b → P a → P b
+
+#check Eq
+#check Eq.refl
+#check Eq.symm
+#check Eq.trans
+#check Eq.congr
+#check Eq.subst

@@ -73,7 +73,7 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
                 (args.drop nParams).take nMotives ++
                 (args.drop (nParams + nMotives)).take nMinors
               let minorArgs := buildMinorArgs fields 0 ctorInfo.recursiveFields
-                  recHash univs recPrefix
+                  recInfo.blockHash univs recPrefix
               let result := Expr.mkAppN minor minorArgs
               -- Also apply any remaining args beyond the recursor's expected args
               let extraArgs := args.drop expectedArgs
@@ -82,15 +82,17 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
       | _ => none
 where
   buildMinorArgs (fields : List Expr) (idx : Nat) (recFields : List (Nat × Nat))
-      (recHash : Hash) (univs : List Level) (recPrefix : List Expr) : List Expr :=
+      (blockHash : Hash) (univs : List Level) (recPrefix : List Expr) : List Expr :=
     match fields with
     | [] => []
     | f :: rest =>
-      if recFields.any (fun (fIdx, _) => fIdx == idx) then
-        let ih := Expr.mkAppN (.const recHash univs) (recPrefix ++ [f])
-        f :: ih :: buildMinorArgs rest (idx + 1) recFields recHash univs recPrefix
-      else
-        f :: buildMinorArgs rest (idx + 1) recFields recHash univs recPrefix
+      match recFields.find? (fun (fIdx, _) => fIdx == idx) with
+      | some (_, targetTypeIdx) =>
+        let targetRecHash := hashRec blockHash targetTypeIdx
+        let ih := Expr.mkAppN (.const targetRecHash univs) (recPrefix ++ [f])
+        f :: ih :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix
+      | none =>
+        f :: buildMinorArgs rest (idx + 1) recFields blockHash univs recPrefix
 
 /-- Quotient reduction: `Quot.lift f h (Quot.mk r a) → f a` -/
 def quotLiftReduce (args : List Expr) (env : Environment)

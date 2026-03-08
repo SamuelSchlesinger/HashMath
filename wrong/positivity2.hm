@@ -1,0 +1,5 @@
+-- Strict positivity: classic Russell-type paradox prevented
+
+-- ERROR: T occurs in negative position (T → ...)
+inductive Bad : Type where
+  | mk : (Bad → ∀ (P : Prop), P) → Bad

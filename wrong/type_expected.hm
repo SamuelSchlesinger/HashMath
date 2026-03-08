@@ -1,0 +1,8 @@
+-- Using a value as a type
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- ERROR: Nat.zero is a value, not a type; can't use it as a type annotation
+axiom bad : Nat.zero

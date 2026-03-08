@@ -1,0 +1,12 @@
+-- Type mismatch errors: definitions where the value doesn't match the declared type
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Bool : Type where
+  | true : Bool
+  | false : Bool
+
+-- ERROR: value has type Nat, declared type is Bool
+def wrong1 : Bool := Nat.zero
