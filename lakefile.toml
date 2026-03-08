@@ -1,0 +1,6 @@
+name = "hashmath"
+version = "0.1.0"
+defaultTargets = ["HashMath"]
+
+[[lean_lib]]
+name = "HashMath"

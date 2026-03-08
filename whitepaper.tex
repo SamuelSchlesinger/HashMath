@@ -47,6 +47,14 @@
 \newcommand{\forallE}{\textsf{forallE}}
 \newcommand{\letE}{\textsf{letE}}
 \newcommand{\concat}{\mathbin{\|}}
+\newcommand{\proj}{\textsf{proj}}
+\newcommand{\sort}{\textsf{sort}}
+\newcommand{\fvar}{\textsf{fvar}}
+\newcommand{\mvar}{\textsf{mvar}}
+\newcommand{\lit}{\textsf{lit}}
+\newcommand{\mdata}{\textsf{mdata}}
+\newcommand{\whnf}{\textsf{whnf}}
+\newcommand{\Quot}{\textsf{Quot}}
 
 \title{\textbf{HashMath: A Content-Addressed Calculus of Inductive Constructions\\ for Permissionless Formal Mathematics}}
 \author{Samuel Schlesinger}
@@ -172,108 +180,394 @@ HashMath provides a single content-addressed pool where every unique proof term 
 \section{The Calculus of Inductive Constructions}
 \label{sec:cic}
 
-We briefly present the Calculus of Inductive Constructions (CIC), the type theory underlying
-both Lean~4 and Rocq.
+This section gives a precise specification of the \emph{HashMath CIC dialect}---the
+subset and variant of the Calculus of Inductive Constructions that HashMath typechecks
+and stores.
+The dialect is closely aligned with the Lean~4 kernel~\cite{lean4} but strips away
+all elaboration-only information (binder names, binder info, free variables, metavariables,
+literals, and metadata nodes) so that the core calculus is fully determined by the
+mathematical content.
 Our presentation follows Coquand and Huet~\cite{coquand1988}, Coquand and
-Paulin-Mohring~\cite{coquand1990}, and Werner~\cite{werner1994}.
+Paulin-Mohring~\cite{coquand1990}, and Werner~\cite{werner1994}, adapted to the
+content-addressed setting.
 
-\subsection{Terms and Types}
+%% --------------------------------------------------
+\subsection{Term Constructors}
 \label{sec:terms}
 
-CIC terms are defined by the following grammar, using de Bruijn indices for bound variables:
-\[
-  t, T \;\;::=\;\; x \;\mid\; c \;\mid\; \Sort(u) \;\mid\; t\;t \;\mid\;
-  \lambda(x{:}T).\,t \;\mid\; \Pi(x{:}T).\,T \;\mid\; \mathsf{let}\; x{:}T := t \;\mathsf{in}\; t
-\]
-where:
-\begin{itemize}[nosep]
-  \item $x$ denotes a variable (represented internally as a de Bruijn index $i \in \mathbb{N}$),
-  \item $c$ denotes a constant (a reference to a previously defined declaration),
-  \item $\Sort(u)$ is a universe sort at level $u$,
-  \item $t\;t$ is application, $\lambda(x{:}T).\,t$ is abstraction, $\Pi(x{:}T).\,T$ is the dependent product,
-  \item $\mathsf{let}\; x{:}T := t \;\mathsf{in}\; t$ is a local definition.
-\end{itemize}
-Lean~4's kernel type \texttt{Expr} is a concrete realization of this grammar, with additional
-fields for binder names and binder info (implicit/explicit annotations) that are relevant for
-elaboration but not for the core type theory~\cite{lean4}.
+Lean~4's kernel defines \texttt{Expr} with 12 constructors.
+HashMath retains the 8 constructors that carry type-theoretic content and excludes the
+4 that serve only elaboration, metaprogramming, or syntactic sugar.
 
+\begin{definition}[HashMath expression grammar]
+\label{def:expr}
+HashMath terms are defined by the following grammar:
+\[
+  e \;\;::=\;\;
+    \bvar(n)
+    \;\mid\; \sort(u)
+    \;\mid\; \const(h, \bar{u})
+    \;\mid\; \app(e_1, e_2)
+    \;\mid\; \lam(e_T, e_b)
+    \;\mid\; \forallE(e_T, e_b)
+    \;\mid\; \letE(e_T, e_v, e_b)
+    \;\mid\; \proj(h, i, e)
+\]
+where $n \in \mathbb{N}$, $u$ is a universe level (Section~\ref{sec:levels}),
+$h \in \{0,1\}^{256}$ is a content hash, $\bar{u}$ is a list of universe levels,
+and $i \in \mathbb{N}$.
+\end{definition}
+
+The constructors are:
+\begin{itemize}[nosep]
+  \item $\bvar(n)$ --- a de Bruijn bound variable with index $n$.
+  \item $\sort(u)$ --- a universe sort at level $u$; $\sort(\textsf{zero})$ is $\Prop$ and $\sort(\textsf{succ}(n))$ is $\Type(n)$.
+  \item $\const(h, \bar{u})$ --- a reference to a previously declared constant identified by its content hash $h$, instantiated at universe levels $\bar{u}$.
+        Crucially, constants are referenced \emph{by hash}, not by name.
+  \item $\app(e_1, e_2)$ --- function application.
+  \item $\lam(e_T, e_b)$ --- lambda abstraction with domain type $e_T$ and body $e_b$.
+        Binder name and binder info (implicit/explicit/instance) are \emph{excluded}: they are elaboration metadata, not type-theoretic content.
+  \item $\forallE(e_T, e_b)$ --- dependent product $\Pi$-type with domain $e_T$ and codomain $e_b$.
+        Binder name and binder info are again excluded.
+  \item $\letE(e_T, e_v, e_b)$ --- let binding with type annotation $e_T$, value $e_v$, and body $e_b$.
+        Binder name is excluded.
+  \item $\proj(h, i, e)$ --- projection of the $i$-th field from a structure whose inductive type has hash $h$, applied to term $e$.
+\end{itemize}
+
+\paragraph{Excluded constructors.}
+Table~\ref{tab:constructors} summarizes the status of all 12 Lean~4 \texttt{Expr}
+constructors.
+The four excluded constructors are:
+\begin{itemize}[nosep]
+  \item $\fvar$ (free variables) --- HashMath stores only \emph{closed} terms; all variables under consideration are bound.
+  \item $\mvar$ (metavariables) --- placeholders for the elaborator; absent from fully elaborated kernel terms.
+  \item $\lit$ (literals) --- Lean~4 uses $\lit$ for efficient \texttt{Nat} and \texttt{String} literals. These are syntactic sugar that can always be expanded to the corresponding constructor applications ($\textsf{succ}(\textsf{succ}(\cdots))$ for natural numbers, a list of characters for strings).
+        HashMath requires the expanded form.
+  \item $\mdata$ (metadata) --- annotation nodes carrying elaboration metadata. These have no type-theoretic content and are stripped.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\begin{tabular}{llcl}
+\hline
+\textbf{Lean 4 Constructor} & \textbf{Purpose} & \textbf{HashMath} & \textbf{Notes} \\
+\hline
+\texttt{bvar}    & Bound variable       & \checkmark & De Bruijn index \\
+\texttt{fvar}    & Free variable        & ---        & Only closed terms stored \\
+\texttt{mvar}    & Metavariable         & ---        & Elaboration only \\
+\texttt{sort}    & Universe sort        & \checkmark & \\
+\texttt{const}   & Named constant       & \checkmark & By hash, not name \\
+\texttt{app}     & Application          & \checkmark & \\
+\texttt{lam}     & Lambda               & \checkmark & Name + info excluded \\
+\texttt{forallE} & Dependent product    & \checkmark & Name + info excluded \\
+\texttt{letE}    & Let binding          & \checkmark & Name excluded \\
+\texttt{lit}     & Literal              & ---        & Expand to constructors \\
+\texttt{mdata}   & Metadata             & ---        & Elaboration only \\
+\texttt{proj}    & Projection           & \checkmark & \\
+\hline
+\end{tabular}
+\caption{Lean~4 \texttt{Expr} constructors and their status in HashMath.
+  Of the 12 constructors, 8 are retained (type-theoretic content) and 4 are
+  excluded (elaboration or syntactic sugar).}
+\label{tab:constructors}
+\end{table}
+
+%% --------------------------------------------------
+\subsection{Universe Levels}
+\label{sec:levels}
+
+Universe levels govern the stratification of types.
+
+\begin{definition}[Level]
+\label{def:level}
+The type of universe levels is defined by:
+\[
+  u \;\;::=\;\;
+    \textsf{zero}
+    \;\mid\; \textsf{succ}(u)
+    \;\mid\; \max(u_1, u_2)
+    \;\mid\; \textsf{imax}(u_1, u_2)
+    \;\mid\; \textsf{param}(n)
+\]
+where $n \in \mathbb{N}$ is a de Bruijn index into the list of universe parameters
+of the enclosing declaration.
+\end{definition}
+
+The constructors are:
+\begin{itemize}[nosep]
+  \item $\textsf{zero}$ --- the base level.
+  \item $\textsf{succ}(u)$ --- the successor of level $u$.
+  \item $\max(u_1, u_2)$ --- the maximum of two levels.
+  \item $\textsf{imax}(u_1, u_2)$ --- the \emph{impredicative maximum}: $\textsf{imax}(u_1, u_2)$ equals $\textsf{zero}$ if $u_2$ evaluates to $\textsf{zero}$, and $\max(u_1, u_2)$ otherwise.
+        This is essential for typing $\Pi$-types into $\Prop$ (see Section~\ref{sec:typing}).
+  \item $\textsf{param}(n)$ --- a universe parameter variable, referenced by de Bruijn index rather than by name, for the same content-addressing reasons that binder names are excluded from terms.
+\end{itemize}
+
+\paragraph{Excluded constructor.}
+Lean~4's \texttt{Level} type also has a \texttt{mvar} constructor for universe metavariables.
+These are elaboration-time placeholders and are excluded from HashMath, just as expression
+metavariables are excluded.
+
+%% --------------------------------------------------
 \subsection{Typing Rules}
 \label{sec:typing}
 
-We present the key typing judgments.
 A context $\Gamma$ is a list of typed variable declarations.
-The judgment $\Gamma \vdash t : T$ asserts that term $t$ has type $T$ in context $\Gamma$.
+The judgment $\Gamma \vdash e : T$ asserts that term $e$ has type $T$ in context $\Gamma$.
 
 \begin{mathpar}
   \inferrule*[Right=Sort]
     { }
-    {\Gamma \vdash \Sort(i) : \Sort(i+1)}
+    {\Gamma \vdash \sort(u) : \sort(\textsf{succ}(u))}
 
   \inferrule*[Right=Var]
-    {(x : T) \in \Gamma}
-    {\Gamma \vdash x : T}
+    {\Gamma(n) = T}
+    {\Gamma \vdash \bvar(n) : T}
 
   \inferrule*[Right=Pi]
-    {\Gamma \vdash A : \Sort(i) \\ \Gamma, x{:}A \vdash B : \Sort(j)}
-    {\Gamma \vdash \Pi(x{:}A).\,B : \Sort(\max(i,j))}
+    {\Gamma \vdash A : \sort(i) \\ \Gamma, A \vdash B : \sort(j)}
+    {\Gamma \vdash \forallE(A, B) : \sort(\textsf{imax}(i,j))}
 \end{mathpar}
 
 \begin{mathpar}
   \inferrule*[Right=Lam]
-    {\Gamma \vdash A : \Sort(i) \\ \Gamma, x{:}A \vdash t : B}
-    {\Gamma \vdash \lambda(x{:}A).\,t : \Pi(x{:}A).\,B}
+    {\Gamma \vdash A : \sort(i) \\ \Gamma, A \vdash t : B}
+    {\Gamma \vdash \lam(A, t) : \forallE(A, B)}
 
   \inferrule*[Right=App]
-    {\Gamma \vdash f : \Pi(x{:}A).\,B \\ \Gamma \vdash a : A}
-    {\Gamma \vdash f\;a : B[a/x]}
+    {\Gamma \vdash f : \forallE(A, B) \\ \Gamma \vdash a : A}
+    {\Gamma \vdash \app(f, a) : B[a/0]}
 
-  \inferrule*[Right=Conv]
-    {\Gamma \vdash t : T \\ T \equiv_\delta T'}
-    {\Gamma \vdash t : T'}
+  \inferrule*[Right=Let]
+    {\Gamma \vdash T : \sort(u) \\ \Gamma \vdash v : T \\ \Gamma, T \vdash b : B}
+    {\Gamma \vdash \letE(T, v, b) : B[v/0]}
 \end{mathpar}
 
-The conversion rule (Conv) allows replacing a type with a definitionally equal one.
-We refer to Coquand and Paulin-Mohring~\cite{coquand1990} for the complete set of rules
-including the let-binding rule, and to the Lean~4 kernel source for a modern implementation~\cite{lean4}.
+\begin{mathpar}
+  \inferrule*[Right=Const]
+    {\textsf{decl}(h) = (k, \tau) \\ |\bar{u}| = k}
+    {\Gamma \vdash \const(h, \bar{u}) : \tau[\bar{u}]}
 
+  \inferrule*[Right=Conv]
+    {\Gamma \vdash e : T \\ T \equiv T'}
+    {\Gamma \vdash e : T'}
+\end{mathpar}
+
+Several points deserve emphasis:
+
+\paragraph{Sort rule for $\Pi$-types.}
+The sort of $\forallE(A, B)$ uses $\textsf{imax}(i, j)$ rather than $\max(i, j)$.
+When $B : \Prop$ (i.e., $j = 0$), the product type also lives in $\Prop$ regardless
+of the level of $A$.
+This is what makes $\Prop$ impredicative: one can quantify over all types and still
+land in $\Prop$.
+
+\paragraph{Cumulativity.}
+The universe hierarchy is cumulative:
+\[
+  \Prop \leq \Type(0) \leq \Type(1) \leq \Type(2) \leq \cdots
+\]
+If $\Gamma \vdash e : \sort(u)$ and $u \leq u'$, then $\Gamma \vdash e : \sort(u')$.
+Cumulativity is built into the conversion rule: the definitional equality check $T \equiv T'$
+accounts for subtyping of sorts.
+
+\paragraph{De Bruijn conventions.}
+Since binder names are absent, contexts are lists rather than named mappings, and
+substitution $B[a/0]$ replaces de Bruijn index 0 and shifts remaining indices.
+The notation $\Gamma, A$ extends the context with a new variable of type $A$ at index 0.
+
+%% --------------------------------------------------
 \subsection{Reductions}
 \label{sec:reductions}
 
-Definitional equality $\equiv_\delta$ is generated by:
+Definitional equality $\equiv$ is generated by the following reduction rules:
+
 \begin{itemize}[nosep]
-  \item \textbf{$\beta$-reduction}: $(\lambda(x{:}A).\,t)\;a \;\longrightarrow_\beta\; t[a/x]$
-  \item \textbf{$\delta$-reduction}: unfolding a named constant to its definition
-  \item \textbf{$\iota$-reduction}: reducing pattern matches on constructors
-  \item \textbf{$\zeta$-reduction}: substituting let-bindings, $\mathsf{let}\;x{:}T := v\;\mathsf{in}\;t \;\longrightarrow_\zeta\; t[v/x]$
+  \item \textbf{$\beta$-reduction}: $\app(\lam(A, t),\; a) \;\longrightarrow_\beta\; t[a/0]$
+
+  \item \textbf{$\delta$-reduction}: unfold a constant to its definition.
+        If $\textsf{decl}(h)$ is a definition with value $v$, then $\const(h, \bar{u}) \;\longrightarrow_\delta\; v[\bar{u}]$.
+        In HashMath, \emph{all definitions are always transparent}: there is no opacity mechanism (see Section~\ref{sec:transparency}).
+
+  \item \textbf{$\iota$-reduction}: a recursor applied to a constructor computes.
+        If $\textsf{rec}_I$ is the recursor for inductive type $I$ and $c_k$ is the $k$-th constructor,
+        then $\textsf{rec}_I \; \bar{p} \; \bar{m} \; (c_k \; \bar{p} \; \bar{a}) \;\longrightarrow_\iota\; m_k \; \bar{a}$
+        (where $\bar{p}$ are parameters, $\bar{m}$ are motives and minor premises, and $m_k$ is the minor premise for $c_k$).
+
+  \item \textbf{$\zeta$-reduction}: substitute let bindings.
+        $\letE(T, v, b) \;\longrightarrow_\zeta\; b[v/0]$
+
+  \item \textbf{Projection reduction}: $\proj(h_I, i, c_k \; \bar{p} \; \bar{a}) \;\longrightarrow\; a_i$,
+        where $c_k$ is the single constructor of the structure $I$ and $a_i$ is the $i$-th field argument.
+
+  \item \textbf{Quotient reduction}: The Quot type (Section~\ref{sec:quotient}) has two computation rules:
+        \begin{align*}
+          \Quot.\textsf{lift}\; f\; h\; (\Quot.\textsf{mk}\; r\; a) &\;\longrightarrow\; f\; a \\
+          \Quot.\textsf{ind}\; \varphi\; h\; (\Quot.\textsf{mk}\; r\; a) &\;\longrightarrow\; \varphi\; a
+        \end{align*}
 \end{itemize}
+
+In addition to these reduction rules, definitional equality includes the following
+equivalences:
+
+\begin{itemize}[nosep]
+  \item \textbf{$\eta$-equivalence}: $f \equiv \lam(A, \app(f', \bvar(0)))$ where $f'$ is $f$ with de Bruijn indices shifted up by 1, provided $f : \forallE(A, B)$.
+
+  \item \textbf{Proof irrelevance for $\Prop$}: if $p, q : T$ and $T : \Prop$, then $p \equiv q$.
+        All proofs of a proposition are definitionally equal.
+
+  \item \textbf{Structural $\eta$ for structures}: if $I$ is a structure (a single-constructor inductive with no indices) and $s : I \; \bar{p}$, then
+        $s \equiv c(\bar{p}, \proj(h_I, 0, s), \proj(h_I, 1, s), \ldots, \proj(h_I, n{-}1, s))$
+        where $c$ is the unique constructor.
+\end{itemize}
+
 CIC enjoys the property that definitional equality is decidable, which is essential for
 typechecking to be decidable.
 
+%% --------------------------------------------------
+\subsection{Definitional Equality Algorithm}
+\label{sec:defeq}
+
+The definitional equality check $e_1 \equiv e_2$ is the heart of the typechecker.
+We outline the algorithm, which follows the Lean~4 kernel~\cite{lean4} with the
+simplification that there is no opacity to manage.
+
+\begin{enumerate}[nosep]
+  \item \textbf{Syntactic equality.}
+        If $e_1$ and $e_2$ are syntactically identical (same AST), return true.
+        This short-circuits the common case.
+
+  \item \textbf{Weak-head normalization (core).}
+        Reduce both sides using $\whnf_{\textsf{core}}$, which applies $\beta$, $\zeta$, $\iota$, projection, and quotient reductions---but \emph{not} $\delta$.
+        Deferring $\delta$-reduction avoids expensive unfolding when possible.
+
+  \item \textbf{Syntactic equality after $\whnf_{\textsf{core}}$.}
+        Compare the reduced terms. If equal, return true.
+
+  \item \textbf{Proof irrelevance.}
+        If both sides have a type in $\Prop$, return true.
+
+  \item \textbf{$\delta$-reduction.}
+        Unfold constants on both sides (in HashMath, all constants are transparent) and repeat the comparison.
+        When both sides are constants, a heuristic unfolds the ``simpler'' side first.
+
+  \item \textbf{Constant equality.}
+        If both sides are $\const(h_1, \bar{u}_1)$ and $\const(h_2, \bar{u}_2)$ with $h_1 = h_2$, check that $\bar{u}_1$ and $\bar{u}_2$ are pointwise equal as levels.
+
+  \item \textbf{Application congruence.}
+        If both sides are applications $\app(f_1, a_1)$ and $\app(f_2, a_2)$,
+        recursively check $f_1 \equiv f_2$ and $a_1 \equiv a_2$.
+
+  \item \textbf{$\eta$-expansion.}
+        If one side is $\lam(A, b)$ and the other is not, $\eta$-expand the non-lambda side and recurse.
+
+  \item \textbf{Structural $\eta$.}
+        If both sides have a structure type, project all fields and compare pairwise.
+\end{enumerate}
+
+If none of these steps succeeds, the terms are not definitionally equal.
+
+%% --------------------------------------------------
+\subsection{Declaration Kinds}
+\label{sec:declarations}
+
+Every entry in the HashMath store is a \emph{declaration}.
+There are four kinds:
+
+\begin{definition}[Declaration]
+\label{def:decl}
+A declaration is one of:
+\begin{itemize}[nosep]
+  \item $\textsf{axiom}(k, \tau)$ --- an axiom with $k$ universe parameters and type $\tau$.
+        No definition body; the axiom is trusted.
+  \item $\textsf{definition}(k, \tau, v)$ --- a definition with $k$ universe parameters, type $\tau$, and value $v$.
+        The typechecker verifies $v : \tau$.
+  \item $\textsf{inductive}(\mathit{block})$ --- an inductive type declaration (see Section~\ref{sec:inductive}).
+  \item $\textsf{quotient}(\mathit{kind})$ --- one of the four built-in quotient constants (see Section~\ref{sec:quotient}).
+\end{itemize}
+\end{definition}
+
+In all cases, $k \in \mathbb{N}$ specifies the number of universe parameters.
+The type $\tau$ and value $v$ (when present) may contain $\textsf{param}(n)$ level
+expressions for $0 \leq n < k$.
+
+%% --------------------------------------------------
 \subsection{Inductive Types}
 \label{sec:inductive}
 
 An inductive type declaration specifies a family of mutually defined types and their constructors.
-Formally, an inductive specification is a tuple $\textsf{Ind}\{p, \Gamma_I, \Gamma_C\}$ where
-$p$ is the number of parameters, $\Gamma_I$ declares the type constructors, and $\Gamma_C$
-declares the data constructors~\cite{paulin1993}.
 The \emph{strict positivity} constraint ensures that recursive occurrences of the type being defined
-appear only in strictly positive positions in constructor argument types, guaranteeing logical consistency.
+appear only in strictly positive positions in constructor argument types, guaranteeing logical consistency~\cite{paulin1993}.
+
+\begin{definition}[Inductive block]
+\label{def:inductive-block}
+An inductive block is a record:
+\[
+  \textsf{InductiveBlock} \;=\; \{
+    k \in \mathbb{N},\;
+    p \in \mathbb{N},\;
+    \mathit{types} : \textsf{List}\;\textsf{InductiveType},\;
+    \mathit{isUnsafe} : \textsf{Bool}
+  \}
+\]
+where $k$ is the number of universe parameters, $p$ is the number of parameters, and each
+$\textsf{InductiveType}$ is:
+\[
+  \textsf{InductiveType} \;=\; \{
+    \mathit{type} : \textsf{Expr},\;
+    \mathit{ctors} : \textsf{List}\;\textsf{Expr}
+  \}
+\]
+The $\mathit{type}$ field gives the type former's type, and $\mathit{ctors}$ lists the types
+of each constructor.
+Mutual inductive types have multiple entries in $\mathit{types}$.
+\end{definition}
 
 \begin{example}[Natural numbers]
 The natural numbers are defined inductively:
 \[
-  \textsf{Ind}\{0,\; (\Nat : \Type),\; (\textsf{zero} : \Nat,\; \textsf{succ} : \Nat \to \Nat)\}
+  \textsf{InductiveBlock}\{k=0,\; p=0,\;
+    \mathit{types} = [\{
+      \mathit{type} = \Type,\;
+      \mathit{ctors} = [\Nat,\; \Nat \to \Nat]
+    \}],\;
+    \mathit{isUnsafe} = \textsf{false}\}
 \]
-The elimination principle for $\Nat$ yields primitive recursion.
+Here $\Nat : \Type$ is the type former, and the two constructors have types
+$\textsf{zero} : \Nat$ and $\textsf{succ} : \Nat \to \Nat$.
+The elimination principle (recursor) is generated automatically.
 \end{example}
 
 \begin{example}[Propositional equality]
-The identity type $\Eq$ is an inductive family:
+The identity type $\Eq$ is an inductive family with $k=1$ universe parameter and $p=1$ parameter:
 \[
-  \textsf{Ind}\{1,\; (\Eq : \Pi(A{:}\Type).\,A \to A \to \Prop),\; (\textsf{refl} : \Pi(A{:}\Type).\,\Pi(a{:}A).\,\Eq\;A\;a\;a)\}
+  \textsf{InductiveBlock}\{k=1,\; p=1,\;
+    \mathit{types} = [\{
+      \mathit{type} = \Pi(A{:}\Type_u).\,A \to A \to \Prop,\;
+      \mathit{ctors} = [\Pi(A{:}\Type_u).\,\Pi(a{:}A).\,\Eq\;A\;a\;a]
+    \}],\;
+    \mathit{isUnsafe} = \textsf{false}\}
 \]
 \end{example}
 
+%% --------------------------------------------------
+\subsection{Quotient Types}
+\label{sec:quotient}
+
+Lean~4 (and therefore HashMath) includes four built-in constants for quotient types, which
+cannot be defined as ordinary inductive types:
+
+\begin{itemize}[nosep]
+  \item $\Quot : (\alpha : \Sort(u)) \to (\alpha \to \alpha \to \Prop) \to \Sort(u)$ --- the quotient type former.
+  \item $\Quot.\textsf{mk} : \{r : \alpha \to \alpha \to \Prop\} \to \alpha \to \Quot\;\alpha\;r$ --- the quotient constructor.
+  \item $\Quot.\textsf{lift} : ((\alpha \to \beta) \to (\forall\;a\;b,\; r\;a\;b \to f\;a = f\;b) \to \Quot\;\alpha\;r \to \beta)$ --- lift a function that respects the equivalence relation.
+  \item $\Quot.\textsf{ind} : (\forall\;a,\; \varphi\;(\Quot.\textsf{mk}\;r\;a)) \to \forall\;q,\; \varphi\;q$ --- the induction principle.
+\end{itemize}
+
+The $\mathit{kind}$ field in a quotient declaration identifies which of these four constants it is.
+Their computation rules are given in Section~\ref{sec:reductions}.
+
+%% --------------------------------------------------
 \subsection{Universe Polymorphism}
 \label{sec:universes}
 
@@ -285,8 +579,8 @@ The universe hierarchy is:
 \[
   \Prop \;:\; \Type(0) \;:\; \Type(1) \;:\; \Type(2) \;:\; \cdots
 \]
-Universe constraints (e.g., $u \leq v$, $u + 1 \leq v$) are collected during typechecking
-and must be satisfiable.
+Universe levels are compared using the normalization procedure: reduce $\max$ and $\textsf{imax}$
+where possible, then check pointwise equality of the resulting normal forms.
 Universe polymorphism interacts importantly with content-addressing (Section~\ref{sec:hash-universes}).
 
 \begin{figure}[t]
@@ -302,9 +596,34 @@ Universe polymorphism interacts importantly with content-addressing (Section~\re
   \draw[->] (t1) -- node[right, font=\small] {:} (t2);
   \draw[->] (t2) -- node[right, font=\small] {:} (dots);
 \end{tikzpicture}
-\caption{The universe hierarchy. Each sort inhabits the next, forming a cumulative tower.}
+\caption{The universe hierarchy. Each sort inhabits the next, forming a cumulative tower.
+$\Prop$ is impredicative: $\Pi$-types into $\Prop$ remain in $\Prop$.}
 \label{fig:universes}
 \end{figure}
+
+%% --------------------------------------------------
+\subsection{Transparency Model}
+\label{sec:transparency}
+
+In Lean~4, definitions carry an opacity attribute (\texttt{@[reducible]},
+\texttt{@[semireducible]}, \texttt{@[irreducible]}) that controls when the
+definitional equality checker may unfold them.
+This is an important performance optimization for a practical proof assistant but
+introduces an elaboration-level concern into the kernel: two terms may or may not
+be definitionally equal depending on the transparency setting.
+
+HashMath takes a simpler approach: \textbf{all definitions are always fully transparent}.
+The definitional equality checker may unfold any definition at any time.
+There is no opacity mechanism.
+
+This simplification is justified by the content-addressing design:
+\begin{itemize}[nosep]
+  \item Opacity is a \emph{performance} concern, not a \emph{correctness} concern.
+        A term that typechecks with some definitions opaque also typechecks with all definitions transparent (though possibly more slowly).
+  \item Content-addressing requires a canonical notion of definitional equality.
+        If opacity affected which terms are equal, two verifiers with different opacity settings might disagree, breaking the determinism that content-addressing requires.
+  \item The absence of opacity simplifies the kernel and the definitional equality algorithm.
+\end{itemize}
 
 
 %% ============================================================
@@ -332,45 +651,75 @@ to identify duplicates, choose canonical names, and redirect references.
 \subsection{Content-Addressing for CIC Terms}
 \label{sec:hashing}
 
-We define the hash function $\hash$ on CIC terms recursively.
+We define the hash function $\hash$ on CIC terms at the byte level.
 All hashing uses SHA3-256~\cite{sha3}.
-Tag strings ensure distinct term constructors never collide.
+Single-byte tags provide domain separation between constructors, natural numbers are
+encoded as unsigned LEB128, and hashes are fixed 32-byte values.
+This specification is complete and unambiguous---it uniquely determines the hash of
+every well-formed term, level, and declaration.
+
+\begin{definition}[Level hash]
+\label{def:hash-level}
+The hash of a universe level is:
+\begin{align*}
+  \hash(\textsf{zero}) &= \SHA(\mathtt{0x00}) \\
+  \hash(\textsf{succ}(l)) &= \SHA(\mathtt{0x01} \concat \hash(l)) \\
+  \hash(\textsf{max}(l_1, l_2)) &= \SHA(\mathtt{0x02} \concat \hash(l_1) \concat \hash(l_2)) \\
+  \hash(\textsf{imax}(l_1, l_2)) &= \SHA(\mathtt{0x03} \concat \hash(l_1) \concat \hash(l_2)) \\
+  \hash(\textsf{param}(n)) &= \SHA(\mathtt{0x04} \concat \textsf{leb128}(n))
+\end{align*}
+\end{definition}
 
 \begin{definition}[Term hash]
 \label{def:hash}
-The hash function $\hash : \textsf{Term} \to \{0,1\}^{256}$ is defined by:
+The hash function $\hash : \textsf{Expr} \to \{0,1\}^{256}$ is:
 \begin{align*}
-  \hash(\bvar(i)) &= \SHA(\texttt{"bvar"} \concat \textsf{encode}(i)) \\
-  \hash(\Sort(u)) &= \SHA(\texttt{"sort"} \concat \hash_{\textsf{level}}(u)) \\
-  \hash(\const(n, \bar{u})) &= \SHA(\texttt{"const"} \concat \hash(\textsf{defn}(n)) \concat \hash_{\textsf{levels}}(\bar{u})) \\
-  \hash(\app(f, a)) &= \SHA(\texttt{"app"} \concat \hash(f) \concat \hash(a)) \\
-  \hash(\lam(\_, T, b, \_)) &= \SHA(\texttt{"lam"} \concat \hash(T) \concat \hash(b)) \\
-  \hash(\forallE(\_, T, b, \_)) &= \SHA(\texttt{"forallE"} \concat \hash(T) \concat \hash(b)) \\
-  \hash(\letE(\_, T, v, b, \_)) &= \SHA(\texttt{"letE"} \concat \hash(T) \concat \hash(v) \concat \hash(b))
+  \hash(\bvar(n)) &= \SHA(\mathtt{0x10} \concat \textsf{leb128}(n)) \\
+  \hash(\Sort(l)) &= \SHA(\mathtt{0x11} \concat \hash(l)) \\
+  \hash(\const(h, [l_0, \ldots, l_{n-1}])) &= \SHA(\mathtt{0x12} \concat h \concat \textsf{leb128}(n) \concat \hash(l_0) \concat \cdots \concat \hash(l_{n-1})) \\
+  \hash(\app(f, a)) &= \SHA(\mathtt{0x13} \concat \hash(f) \concat \hash(a)) \\
+  \hash(\lam(T, b)) &= \SHA(\mathtt{0x14} \concat \hash(T) \concat \hash(b)) \\
+  \hash(\forallE(T, b)) &= \SHA(\mathtt{0x15} \concat \hash(T) \concat \hash(b)) \\
+  \hash(\letE(T, v, b)) &= \SHA(\mathtt{0x16} \concat \hash(T) \concat \hash(v) \concat \hash(b)) \\
+  \hash(\textsf{proj}(h, i, e)) &= \SHA(\mathtt{0x17} \concat h \concat \textsf{leb128}(i) \concat \hash(e))
 \end{align*}
-where $\textsf{defn}(n)$ resolves the constant $n$ to its full definition (type and value),
-and $\_$ denotes fields excluded from the hash (binder names, binder info).
+where $h$ in $\const$ and $\textsf{proj}$ is the 32-byte hash of the referenced declaration,
+and $\textsf{leb128}$ denotes unsigned LEB128 encoding.
+Binder names and binder info are excluded: only the type-theoretic content is hashed.
 \end{definition}
+
+\begin{definition}[Declaration hash]
+\label{def:hash-decl}
+The hash of a declaration is:
+\begin{align*}
+  \hash(\textsf{axiom}(n, T)) &= \SHA(\mathtt{0x20} \concat \textsf{leb128}(n) \concat \hash(T)) \\
+  \hash(\textsf{definition}(n, T, v)) &= \SHA(\mathtt{0x21} \concat \textsf{leb128}(n) \concat \hash(T) \concat \hash(v)) \\
+  \hash(\textsf{inductive}(\textit{block})) &= \SHA(\mathtt{0x22} \concat \textsf{encode}(\textit{block})) \\
+  \hash(\textsf{quotient}(k)) &= \SHA(\mathtt{0x23} \concat k_{\textsf{byte}})
+\end{align*}
+where $n$ is the number of universe parameters and the inductive block encoding follows
+the same conventions (LEB128 lengths, recursive sub-hashing).
+\end{definition}
+
+\begin{remark}
+The tag bytes are chosen so that levels (\texttt{0x00}--\texttt{0x04}),
+expressions (\texttt{0x10}--\texttt{0x17}), and declarations (\texttt{0x20}--\texttt{0x23})
+occupy disjoint ranges.
+This ensures that no term can collide with a level or declaration at the SHA3 input level,
+even before considering structural differences.
+\end{remark}
 
 Several design decisions are critical:
 
-\paragraph{Binder names are excluded.}
+\paragraph{Binder names and binder info are excluded.}
 The terms $\lambda(x{:}\Nat).\,x$ and $\lambda(y{:}\Nat).\,y$ are $\alpha$-equivalent
-and receive the same hash.
-Since we use de Bruijn indices internally, the binder name is already redundant---it is
-carried only for pretty-printing.
-Excluding it means $\alpha$-equivalence is built into the hash by construction.
+and receive the same hash, since both have de Bruijn representation
+$\lam(\Nat, \bvar(0))$.
+Lean~4's binder info (implicit, explicit, instance) is an elaboration concern
+and is similarly excluded.
 
-\paragraph{Binder info is excluded.}
-Lean~4 attaches \emph{binder info} to each binder: whether the argument is explicit, implicit,
-strict implicit, or instance implicit.
-This is an elaboration concern, not a type-theoretic one.
-We exclude binder info from the core hash; elaboration metadata can be stored separately as
-annotations on the hash.
-
-\paragraph{Constants resolve to definitions.}
-The hash of $\const(n, \bar{u})$ includes the hash of the \emph{definition} that $n$ refers to,
-not the string $n$ itself.
+\paragraph{Constants reference by hash.}
+The hash of $\const(h, \bar{u})$ includes the 32-byte hash $h$ of the referenced declaration.
 This is the key move that eliminates name-dependence: two constants with different names but
 identical definitions produce the same hash.
 
@@ -380,18 +729,18 @@ Every bound variable must be under a binder, and every constant must resolve to 
 
 \begin{example}[Hashing the identity function on $\Nat$]
 \label{ex:identity}
-Consider $\lambda(n{:}\Nat).\,n$, which in de Bruijn notation is $\lam(\_, \Nat, \bvar(0), \_)$.
+Consider $\lambda(n{:}\Nat).\,n$, which in de Bruijn notation is $\lam(\Nat, \bvar(0))$.
 Its hash is:
 \[
-  \hash(\lam(\_, \Nat, \bvar(0), \_)) = \SHA(\texttt{"lam"} \concat \hash(\Nat) \concat \SHA(\texttt{"bvar"} \concat \textsf{encode}(0)))
+  \hash(\lam(\Nat, \bvar(0))) = \SHA(\mathtt{0x14} \concat \hash(\Nat) \concat \SHA(\mathtt{0x10} \concat \textsf{leb128}(0)))
 \]
-where $\hash(\Nat)$ is the hash of the inductive definition of natural numbers.
+where $\hash(\Nat)$ is the hash of the inductive declaration defining $\Nat$.
 \end{example}
 
 \begin{example}[Alpha-equivalence]
 \label{ex:alpha}
 The terms $\lambda(x{:}\Nat).\,x$ and $\lambda(y{:}\Nat).\,y$ both have de Bruijn representation
-$\lam(\_, \Nat, \bvar(0), \_)$.
+$\lam(\Nat, \bvar(0))$.
 Since binder names are excluded from the hash, they produce identical hashes. \qed
 \end{example}
 
@@ -693,10 +1042,17 @@ computes hashes, and submits to the hashset.
 This pipeline can import the entirety of Mathlib.
 
 \paragraph{Rocq pipeline.}
-Rocq's Gallina is also CIC.
-The differences between Lean's and Rocq's kernel terms are largely syntactic: both have
-the same term constructors, the same universe hierarchy, and the same inductive type scheme.
-A Rocq export tool performs the analogous translation.
+Rocq's Gallina is also CIC, but the kernels diverge in important ways
+(see Section~\ref{sec:divergences}): Rocq uses \texttt{match} instead of recursors,
+lacks primitive quotient types, has different $\eta$ rules, and includes
+the \textsf{Set} universe.
+A Rocq export tool must translate these kernel differences into HashMath CIC's
+canonical form.
+Terms that rely on Rocq-specific kernel features may not have direct HashMath equivalents;
+in such cases, the export pipeline must re-elaborate or reject the term.
+Cross-system sharing of proof hashes requires either a translation layer or
+convergence on shared elaboration patterns---both are feasible but nontrivial
+engineering challenges.
 
 \paragraph{Contrast with Logipedia/Dedukti.}
 The Logipedia project~\cite{logipedia} and the Dedukti logical framework~\cite{dedukti}
@@ -974,6 +1330,109 @@ This is a chicken-and-egg problem with a clear bootstrap strategy:
     discovery layer.
 \end{itemize}
 
+\subsection{Eta-Equivalence and Proof Irrelevance}
+\label{sec:eta-challenges}
+
+HashMath CIC includes function $\eta$-equivalence ($f \equiv \lambda x.\, f\;x$),
+structural $\eta$ for structure-like inductives, and proof irrelevance for $\Prop$.
+These features are necessary for compatibility with Lean~4's kernel, but they increase
+the complexity of the definitional equality checker and the potential for hash diversity.
+
+Two terms that are $\eta$-equivalent receive different hashes---the hash captures the
+exact syntactic structure, not the equivalence class.
+However, both terms typecheck against the same type and are therefore both discoverable
+through the type index.
+This is an intentional design choice: normalizing before hashing would require choosing
+a canonical form, which is computationally expensive and may not be unique
+for all equivalences.
+
+\subsection{Elaboration Non-Determinism}
+\label{sec:elaboration}
+
+Different proof assistants (and different versions of the same assistant) may elaborate
+the same mathematical statement into different kernel terms.
+Lean~4's tactic mode, for instance, often produces terms with more let-bindings, casts,
+and auxiliary definitions than a hand-written proof term.
+Since HashMath hashes the \emph{elaborated} term, the same mathematical theorem may receive
+different hashes when elaborated by different tools.
+
+This is inherent to any content-addressing scheme that operates below the elaboration level.
+The type index mitigates the issue: all proofs of a given type are discoverable regardless
+of their elaboration strategy.
+Over time, as community norms develop around preferred elaboration patterns, convergence
+is expected for core mathematical content.
+
+\subsection{Lean/Rocq Kernel Divergences}
+\label{sec:divergences}
+
+While both Lean~4 and Rocq implement CIC, their kernels differ in several important ways:
+\begin{itemize}[nosep]
+  \item \textbf{Recursors vs.\ match}: Lean~4 uses recursors as the primitive elimination form;
+    Rocq uses \texttt{match} expressions.
+    These are interdefinable but produce different kernel terms.
+  \item \textbf{Quotient types}: Lean includes quotient types as a primitive;
+    Rocq constructs them using the axiom of unique choice or via setoid reasoning.
+  \item \textbf{Eta rules}: Lean includes function $\eta$ and structural $\eta$ for structures;
+    Rocq's definitional equality rules differ slightly.
+  \item \textbf{Proof irrelevance}: Lean has proof irrelevance for $\Prop$ at the kernel level;
+    in Rocq, this holds only for propositional content in the SProp universe.
+  \item \textbf{Literals}: Lean has native literal expressions for natural numbers and strings;
+    HashMath CIC eliminates these in favor of \textsf{Nat.zero}/\textsf{Nat.succ} encoding.
+  \item \textbf{No \textsf{Set} sort}: Lean does not have Rocq's \textsf{Set} universe.
+\end{itemize}
+These divergences mean that a theorem elaborated in Lean and the ``same'' theorem elaborated
+in Rocq will generally receive different hashes.
+Cross-system sharing requires either a translation layer or a shared elaboration pipeline---both
+are feasible but represent engineering work beyond the scope of the initial system.
+
+\subsection{Spam, DoS, and Proof Term Bloat}
+\label{sec:spam}
+
+An open, permissionless system is vulnerable to spam: adversaries can submit
+arbitrarily many well-typed but useless terms (e.g., $\textsf{Nat.succ}^{10^6}(\textsf{zero})$).
+This is a \emph{policy} concern, not a specification concern.
+Possible mitigations include:
+\begin{itemize}[nosep]
+  \item \textbf{Size bounds}: reject terms above a configurable size threshold.
+  \item \textbf{Rate limiting}: bound the submission rate per identity or IP address.
+  \item \textbf{Proof-of-work}: require a computational puzzle alongside each submission.
+  \item \textbf{Reputation}: weight search results by community endorsement.
+\end{itemize}
+None of these mechanisms are part of the CIC specification; they belong to the
+policy layer of any deployment.
+
+Relatedly, tactic-elaborated proof terms can be very large---a simple \texttt{omega} call
+may expand to thousands of kernel steps.
+DAG sharing (deduplicating shared subterms by hash) and compression can significantly
+reduce storage costs.
+The content-addressed structure naturally enables deduplication: identical subterms that
+appear across many proofs are stored exactly once.
+
+\subsection{Axiom Identity Across Systems}
+\label{sec:axiom-identity}
+
+Lean's \texttt{propext} (propositional extensionality) and Rocq's propositional extensionality
+axiom express the same mathematical principle but, as different kernel terms, receive different hashes.
+This means that proofs using Lean's \texttt{propext} and proofs using Rocq's equivalent
+cannot share a dependency tree.
+
+Standardizing axiom declarations across systems is future work.
+One approach is to define a canonical HashMath CIC declaration for each standard axiom
+and require export pipelines to map system-specific axioms to these canonical forms.
+
+\subsection{Type Index Precision}
+\label{sec:index-precision}
+
+The type index maps type hashes to inhabitant hashes, using \emph{syntactic} type hashes.
+This means that two types that are definitionally equal but syntactically different
+(e.g., $\Nat \to \Nat$ and $\Pi(n{:}\Nat).\,\Nat$) produce different index entries.
+A query for one will not find inhabitants typed at the other.
+
+Normalizing types before indexing could improve precision but introduces computational cost
+and the question of which normal form to use.
+In practice, most mathematical types are stated in a relatively canonical form, and
+the type index is effective despite this limitation.
+
 
 %% ============================================================
 \section{Related Work}
@@ -1070,6 +1529,149 @@ Build IDE integration (VS Code, Emacs) for browsing and searching the hashset.
 Build a web interface for exploration.
 Support community-maintained name maps.
 Develop proof visualization tools.
+
+
+%% ============================================================
+\section{Future Work: Advanced Indices}
+\label{sec:indices}
+
+The type-to-inhabitants index (Section~\ref{sec:type-index}) is the simplest
+and most fundamental index over the hashset: given a type hash, return all inhabitants.
+But a content-addressed knowledge base admits a much richer family of indices, each
+enabling a different mode of mathematical search.
+We outline several directions.
+
+\subsection{Dependency and Reverse-Dependency Index}
+\label{sec:dep-index}
+
+Every declaration's hash transitively encodes its dependencies through the Merkle DAG.
+Materializing this as an explicit index yields two maps:
+\[
+  \textsf{deps}(h) = \{ h' \mid h' \text{ is a transitive dependency of } h \}
+\]
+\[
+  \textsf{rdeps}(h) = \{ h' \mid h \in \textsf{deps}(h') \}
+\]
+The dependency map answers ``what does this theorem rely on?''---useful for
+axiom auditing, minimality checking, and understanding proof structure.
+The reverse-dependency map answers ``what builds on this definition?''---essential
+for impact analysis and for understanding the downstream consequences of a change.
+
+Both maps are computable from the hashset contents and can be maintained incrementally
+as new terms are added.
+
+\subsection{Axiom Filter Index}
+\label{sec:axiom-index}
+
+Section~\ref{sec:axioms} noted that axiom dependencies are visible through the Merkle DAG.
+A dedicated axiom filter index makes this query efficient:
+\[
+  \textsf{axioms}(h) = \{ h' \in \textsf{deps}(h) \mid h' \text{ is an axiom} \}
+\]
+This enables queries like ``find all proofs of $X$ that are constructive'' (no excluded middle),
+``find all proofs that avoid the axiom of choice,'' or ``find all proofs
+that use only the axioms shared by Lean and Rocq.''
+For communities with specific foundational commitments, the axiom filter index
+provides automatic compliance checking.
+
+\subsection{Unification-Based Type Search}
+\label{sec:unification-index}
+
+The type-to-inhabitants index requires an \emph{exact} type hash match.
+This is limiting: the query type must be syntactically identical to the stored type,
+modulo alpha-equivalence.
+A more powerful search allows the query type to contain metavariables
+(wildcards) that are instantiated by unification.
+
+For example, a query for $\forall (n : \Nat),\; ?P\;n \to ?P\;(\textsf{succ}\;n)$
+would match any induction step, returning inhabitants whose types unify with the pattern.
+This is analogous to Hoogle's type search with polymorphism.
+
+Implementing unification-based search over a large corpus requires indexing techniques
+from the term-indexing literature~\cite{graf1996}: discrimination trees, substitution trees,
+or path indexing.
+Adapting these to CIC terms with dependent types is a nontrivial but tractable
+engineering challenge.
+
+\subsection{Head-Symbol Index}
+\label{sec:head-index}
+
+Many mathematical queries are about a specific concept: ``find all lemmas about $\textsf{List}$''
+or ``find all properties of $\textsf{Ring}$.''
+A head-symbol index maps the outermost constant of a type to its inhabitants:
+\[
+  \textsf{head}(h_c) = \{ h \mid (h, t, T) \in \hashset,\; \textsf{headConst}(T) = h_c \}
+\]
+where $\textsf{headConst}$ extracts the outermost constant after stripping universal
+quantifiers and function arrows.
+This is a lightweight approximation to concept-level search, effective for browsing
+the knowledge base by topic.
+
+\subsection{Subexpression and Pattern Index}
+\label{sec:subexpr-index}
+
+A subexpression index maps each constant hash to the set of terms that mention it:
+\[
+  \textsf{mentions}(h_c) = \{ h \mid (h, t, T) \in \hashset,\; h_c \text{ occurs in } t \text{ or } T \}
+\]
+This supports queries like ``find all terms that use $\textsf{Nat.add}$'' or
+``find all proofs that apply $\textsf{Eq.trans}$.''
+It is a form of full-text search for formalized mathematics.
+
+A more expressive variant allows \emph{pattern matching}: given a template expression
+with wildcards, find all terms containing a subexpression matching the pattern.
+For example, the pattern $\textsf{Nat.add}\;?\;0$ would find all terms that add zero
+to something.
+Efficient pattern matching over a large term corpus connects to the literature
+on code search and anti-unification.
+
+\subsection{Typeclass and Structure Instance Index}
+\label{sec:instance-index}
+
+In systems like Lean~4, typeclass instances are key organizational structures.
+A typeclass instance index maps each typeclass (identified by the hash of its
+inductive declaration) to the set of instances registered for it:
+\[
+  \textsf{instances}(h_{\textsf{class}}) = \{ h \mid (h, t, T) \in \hashset,\;
+  T \text{ has head constant } h_{\textsf{class}} \}
+\]
+This enables queries like ``which types have a $\textsf{Group}$ instance?'' or
+``find all $\textsf{Monad}$ implementations.''
+Combined with the head-symbol index, it supports rich algebraic hierarchy browsing.
+
+\subsection{Normalized Type Index}
+\label{sec:norm-index}
+
+Section~\ref{sec:index-precision} noted that the type index uses syntactic type hashes,
+so definitionally equal types with different syntax produce different index entries.
+A normalized type index addresses this by reducing types to a canonical form before hashing:
+\[
+  \typeindex_{\textsf{norm}}(h) = \typeindex(\hash(\textsf{normalize}(T)))
+  \quad\text{where}\quad \hash(T) = h
+\]
+The challenge is choosing a normalization strategy.
+Full $\beta\delta\iota\zeta$-normalization is computationally expensive (potentially
+exponential), but weaker normalizations---such as head-normalizing only the outermost
+structure, or normalizing with bounded unfolding depth---may capture most practical
+equivalences at acceptable cost.
+
+\subsection{Compositional Search}
+\label{sec:compositional}
+
+The indices above can be composed to answer complex queries.
+For example:
+\begin{itemize}[nosep]
+  \item ``Find all constructive proofs of commutativity for rings'':
+    unification-based type search for $\forall (R : \textsf{Ring}),\; ?a \cdot ?b = ?b \cdot ?a$,
+    filtered by the axiom index to exclude classical axioms.
+  \item ``Find all lemmas about $\textsf{List.map}$ that don't depend on $\textsf{Decidable}$'':
+    subexpression search for $\textsf{List.map}$, filtered by reverse-dependency exclusion.
+  \item ``Find all instances of $\textsf{Functor}$ for types defined in terms of $\textsf{List}$'':
+    typeclass instance index for $\textsf{Functor}$, filtered by dependency index for $\textsf{List}$.
+\end{itemize}
+A query language that supports Boolean combinations of index predicates, analogous to
+database query planning, would make the knowledge base into a genuine search engine
+for formalized mathematics.
 
 
 %% ============================================================
@@ -1242,6 +1844,11 @@ S.~Nakamoto,
 V.~Buterin,
 ``Ethereum: A next-generation smart contract and decentralized application platform,''
 2014.
+
+\bibitem{graf1996}
+P.~Graf,
+``Term Indexing,''
+\emph{Lecture Notes in Computer Science}, vol.~1053, Springer, 1996.
 
 \end{thebibliography}
 
