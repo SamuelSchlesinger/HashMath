@@ -76,17 +76,20 @@ def hashCtor (blockHash : Hash) (typeIdx ctorIdx : Nat) : Hash :=
 def hashRec (blockHash : Hash) (typeIdx : Nat) : Hash :=
   hashBytes (serByte Tag.indRec ++ blockHash.bytes ++ serNat typeIdx)
 
--- Collision resistance axiom: if sha256 produces equal outputs,
--- the inputs were equal. This is the standard cryptographic assumption.
-axiom sha256_collision_resistant (a b : ByteArray) :
-  sha256 a = sha256 b → a = b
+-- NOTE: SHA-256 is NOT injective (pigeonhole principle: infinite domain,
+-- 2^256 codomain). Collision resistance is a computational assumption —
+-- finding collisions is infeasible — but collisions provably exist.
+-- The theorems below are parameterized by an explicit (unprovable) hypothesis.
 
-/-- hashBytes is injective (given SHA-256 collision resistance). -/
-theorem hashBytes_injective (a b : ByteArray) :
+/-- hashBytes is injective, assuming no SHA-256 collisions occur
+    on the inputs in question. -/
+theorem hashBytes_injective
+    (sha256_no_collision : ∀ a b : ByteArray, sha256 a = sha256 b → a = b)
+    (a b : ByteArray) :
     hashBytes a = hashBytes b → a = b := by
   intro h
   have : (hashBytes a).bytes = (hashBytes b).bytes := by rw [h]
   simp [hashBytes] at this
-  exact sha256_collision_resistant _ _ this
+  exact sha256_no_collision _ _ this
 
 end HashMath

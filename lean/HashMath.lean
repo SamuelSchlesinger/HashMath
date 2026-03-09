@@ -16,4 +16,13 @@ import HashMath.Parser
 import HashMath.Elab
 import HashMath.Properties.SerializeInj
 import HashMath.Properties.HashInjectivity
+import HashMath.Properties.DeBruijn
+import HashMath.Properties.LevelProperties
+import HashMath.Properties.Spec
+import HashMath.Properties.Reduction
+import HashMath.Properties.Typing
+import HashMath.Properties.DefEqProperties
+import HashMath.Properties.Positivity
+import HashMath.Properties.Soundness
+import HashMath.Properties.LEB128
 import HashMath.Tests
