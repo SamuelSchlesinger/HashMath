@@ -1,0 +1,22 @@
+-- Full exploit: proof irrelevance + large elimination = type confusion.
+-- This test verifies the exploit is blocked (Wrap.rec.{1, 2} is rejected).
+
+inductive Bool : Type where
+  | false : Bool
+  | true : Bool
+
+inductive Wrap.{u} (A : Sort u) : Prop where
+  | mk : A → Wrap A
+
+-- Without the fix, this defines a cast between P w1 and P w2 for any proofs
+-- w1 w2 : Wrap Bool, exploiting proof irrelevance.
+-- With the fix, F cannot be defined (Wrap.rec.{1, 2} is rejected).
+def F : Wrap.{1} Bool → Type :=
+  Wrap.rec.{1, 2} Bool
+    (fun (_ : Wrap.{1} Bool) => Type)
+    (fun (b : Bool) =>
+      Bool.rec.{2}
+        (fun (_ : Bool) => Type)
+        Bool
+        Bool
+        b)

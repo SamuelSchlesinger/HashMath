@@ -1,0 +1,21 @@
+-- Prop inductive with polymorphic field: accepted but no large elimination.
+-- Matches Lean 4 behavior: Wrap is valid (Prop is impredicative)
+-- but the recursor targets Prop only (no large elimination).
+
+inductive Wrap.{u} (A : Sort u) : Prop where
+  | mk : A → Wrap A
+
+-- Wrap.rec has 1 univ param (u only, no motive universe)
+-- The motive targets Prop only (no large elimination):
+#check Wrap.rec.{0}
+
+-- Can still use it at Prop level:
+inductive True : Prop where
+  | intro : True
+
+def unwrap_prop : Wrap.{0} True → True :=
+  Wrap.rec.{0} True
+    (fun (_ : Wrap.{0} True) => True)
+    (fun (t : True) => t)
+
+#check unwrap_prop

@@ -450,11 +450,26 @@ def checkInductiveBlock (env : Environment) (block : InductiveBlock) : Except St
       -- Check iref indices are in range
       if hasInvalidIRef ctorTy block.types.length then
         throw "checkInductiveBlock: iref index out of range"
-      -- Check constructor returns its own inductive type (not another type in the block)
-      match (getResultType ctorTy).getAppFn with
-      | .iref idx _ =>
+      -- Check constructor returns its own inductive type with correct arguments
+      let nBindings := countForallE ctorTy
+      let retTy := getResultType ctorTy
+      let (retHead, retArgs) := retTy.getAppFnArgs
+      match retHead with
+      | .iref idx univs =>
         if idx != typeIdx then
           throw s!"checkInductiveBlock: constructor returns wrong type (iref {idx}, expected {typeIdx})"
+        -- Check universe arguments match
+        let expectedUnivs := (List.range block.numUnivParams).map Level.param
+        if univs != expectedUnivs then
+          throw "checkInductiveBlock: constructor return type has wrong universe arguments"
+        -- Check parameter arguments are correct bvars
+        if retArgs.length < block.numParams then
+          throw "checkInductiveBlock: constructor return type has too few arguments"
+        let paramArgs := retArgs.take block.numParams
+        let expectedParams := (List.range block.numParams).map
+          (fun i => Expr.bvar (nBindings - 1 - i))
+        if paramArgs != expectedParams then
+          throw "checkInductiveBlock: constructor return type has wrong parameter arguments"
       | _ => throw "checkInductiveBlock: constructor must return its inductive type"
     typeIdx := typeIdx + 1
   return ()

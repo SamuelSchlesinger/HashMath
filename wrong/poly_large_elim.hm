@@ -1,0 +1,11 @@
+-- Polymorphic large elimination from Prop should be blocked.
+-- Wrap.{u} (A : Sort u) : Prop has a field whose universe is polymorphic,
+-- so large elimination must be disabled (matching Lean 4 behavior).
+-- With large elim, proof irrelevance + extraction = unsound.
+
+inductive Wrap.{u} (A : Sort u) : Prop where
+  | mk : A → Wrap A
+
+-- Wrap.rec should have 1 univ param (just u), not 2 (u + motive universe).
+-- Requesting 2 univ params should fail:
+#check Wrap.rec.{1, 1}

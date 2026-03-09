@@ -32,7 +32,7 @@ where
             match fieldLevel.normalize.toNat with
             | some 0 => hasHighField body numParams (depth + 1) (domTy :: ctx)
             | some _ => true  -- field in Sort n (n>0), blocks large elim
-            | none => hasHighField body numParams (depth + 1) (domTy :: ctx)  -- polymorphic
+            | none => true  -- polymorphic: conservatively block large elim
           | _ => hasHighField body numParams (depth + 1) (domTy :: ctx)
         | .error _ => hasHighField body numParams (depth + 1) (domTy :: ctx)
     | _ => false
@@ -60,7 +60,8 @@ where
             | some true => go body (depth + 1) (domTy :: ctx)
             | some false =>
               throw s!"checkDecl: field universe Sort {repr fieldLevel} exceeds target Sort {repr targetLevel} in constructor at depth {depth}"
-            | none => go body (depth + 1) (domTy :: ctx)  -- polymorphic, can't determine statically
+            | none =>
+              throw s!"checkDecl: field universe Sort {repr fieldLevel} cannot be shown ≤ Sort {repr targetLevel} (polymorphic)"
           | _ => throw s!"checkDecl: field domain type does not have a Sort type"
         | .error e => throw s!"checkDecl: cannot infer field type: {e}"
     | _ => .ok ()

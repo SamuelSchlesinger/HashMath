@@ -1,0 +1,7 @@
+-- Universe constraint bypass: polymorphic field universe that can exceed target.
+-- Box.{u, v} (A : Sort u) : Sort v should be rejected because
+-- we cannot prove u ≤ v (it depends on instantiation).
+-- Without universe constraint accumulation, this must be rejected.
+
+inductive Box.{u, v} (A : Sort u) : Sort v where
+  | mk : A → Box A
