@@ -203,6 +203,39 @@ def parseManifest (content : String) : List (String × Hash) :=
     | [name, hexHash] => (hexToHash hexHash).map fun h => (name, h)
     | _ => none
 
+/-- Process a .hm file, handling import commands recursively.
+    Imported files are resolved relative to the importing file's directory.
+    The `imported` ref tracks already-processed files to avoid cycles. -/
+partial def processFileIO (cb : Codebase) (filePath : System.FilePath)
+    (imported : IO.Ref (Std.HashMap String Bool)) : IO (Codebase × List ElabResult) := do
+  let key := filePath.toString
+  let map ← imported.get
+  if map.contains key then return (cb, [])
+  imported.set (map.insert key true)
+  let source ← try
+    IO.FS.readFile filePath
+  catch _ =>
+    throw (IO.userError s!"import error: file not found '{filePath}'")
+  let cmds ← match HashMath.parseCommands source with
+    | .ok c => pure c
+    | .error e => throw (IO.userError s!"parse error in {filePath}: {e}")
+  let dir := filePath.parent.getD ⟨"."⟩
+  let mut cb := cb
+  let mut results : List ElabResult := []
+  for cmd in cmds do
+    match cmd with
+    | .import_ path =>
+      let fullPath := dir / path
+      let (cb', _) ← processFileIO cb fullPath imported
+      cb := cb'
+    | _ =>
+      match cb.processCommand cmd with
+      | .ok (cb', result) =>
+        cb := cb'
+        results := result :: results
+      | .error e => throw (IO.userError s!"{filePath}: {e}")
+  return (cb, results.reverse)
+
 def main (args : List String) : IO Unit := do
   match args with
   | ["--test"] =>
@@ -321,15 +354,15 @@ def main (args : List String) : IO Unit := do
     if !ok then
       IO.eprintln "Failed to connect to sidecar."
       return
+    let imported ← IO.mkRef ({} : Std.HashMap String Bool)
     let mut cb := Codebase.empty
     for file in files do
-      let source ← IO.FS.readFile file
-      match cb.processSource source with
-      | .ok (cb', results) =>
+      try
+        let (cb', results) ← processFileIO cb ⟨file⟩ imported
         cb := cb'
         for r in results do
           IO.println (formatResult cb' r)
-      | .error e =>
+      catch e =>
         IO.eprintln s!"error in {file}: {e}"
         handle.shutdown
         return
@@ -377,12 +410,13 @@ def main (args : List String) : IO Unit := do
     IO.eprintln "Usage: hm manifest --generate <file.hm> [file2.hm ...] > lib.hmm"
 
   | "manifest" :: "--generate" :: files => do
+    let imported ← IO.mkRef ({} : Std.HashMap String Bool)
     let mut cb := Codebase.empty
     for file in files do
-      let source ← IO.FS.readFile file
-      match cb.processSource source with
-      | .ok (cb', _) => cb := cb'
-      | .error e =>
+      try
+        let (cb', _) ← processFileIO cb ⟨file⟩ imported
+        cb := cb'
+      catch e =>
         IO.eprintln s!"error in {file}: {e}"
         return
     IO.print (generateManifest cb)
@@ -410,15 +444,15 @@ def main (args : List String) : IO Unit := do
       IO.eprintln "Unknown command. Use --test, serve, publish, fetch, or peers."
       IO.eprintln "Or provide .hm files to process."
       return
+    let imported ← IO.mkRef ({} : Std.HashMap String Bool)
     let mut cb := Codebase.empty
     for file in hmFiles do
-      let source ← IO.FS.readFile file
-      match cb.processSource source with
-      | .ok (cb', results) =>
+      try
+        let (cb', results) ← processFileIO cb ⟨file⟩ imported
         cb := cb'
         for r in results do
           IO.println (formatResult cb' r)
-      | .error e =>
+      catch e =>
         IO.eprintln s!"error in {file}: {e}"
         return
     IO.println s!"Processed {hmFiles.length} file(s) successfully."

@@ -1,0 +1,442 @@
+-- =====================================================================
+-- Nat — Natural numbers and arithmetic
+-- =====================================================================
+--
+-- All theorems proven by induction via Nat.rec. No axioms.
+-- Follows the proof structure of hero.hm but generalized.
+
+import "Equality.hm"
+import "Logic.hm"
+
+-----------------------------------------------------------------------
+-- 1. Natural numbers
+-----------------------------------------------------------------------
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Nat.rec.{u} : ∀ (motive : Nat → Sort u)
+--   (minor_zero : motive Nat.zero)
+--   (minor_succ : ∀ (n : Nat), motive n → motive (Nat.succ n))
+--   (major : Nat),
+--   motive major
+
+-----------------------------------------------------------------------
+-- 2. Basic arithmetic
+-----------------------------------------------------------------------
+
+-- add m zero     ≡ m               (by ι on zero)
+-- add m (succ n) ≡ succ (add m n)  (by ι on succ)
+def Nat.add : Nat → Nat → Nat :=
+  fun (m : Nat) =>
+    Nat.rec.{1}
+      (fun (_ : Nat) => Nat)
+      m
+      (fun (_ : Nat) (ih : Nat) => Nat.succ ih)
+
+-- mul m zero     ≡ zero             (by ι on zero)
+-- mul m (succ n) ≡ add m (mul m n)  (by ι on succ)
+def Nat.mul : Nat → Nat → Nat :=
+  fun (m : Nat) =>
+    Nat.rec.{1}
+      (fun (_ : Nat) => Nat)
+      Nat.zero
+      (fun (_ : Nat) (ih : Nat) => Nat.add m ih)
+
+-- pred zero     ≡ zero
+-- pred (succ n) ≡ n
+def Nat.pred : Nat → Nat :=
+  Nat.rec.{1}
+    (fun (_ : Nat) => Nat)
+    Nat.zero
+    (fun (n : Nat) (_ : Nat) => n)
+
+-----------------------------------------------------------------------
+-- 3. Congruence lemmas
+-----------------------------------------------------------------------
+
+-- a = b → succ a = succ b
+def Nat.congr_succ : ∀ (a : Nat) (b : Nat),
+    Eq Nat a b → Eq Nat (Nat.succ a) (Nat.succ b) :=
+  fun (a : Nat) (b : Nat) (h : Eq Nat a b) =>
+    Eq.congr Nat Nat Nat.succ a b h
+
+-- a = b → add c a = add c b
+def Nat.congr_add_left : ∀ (c : Nat) (a : Nat) (b : Nat),
+    Eq Nat a b → Eq Nat (Nat.add c a) (Nat.add c b) :=
+  fun (c : Nat) (a : Nat) (b : Nat) (h : Eq Nat a b) =>
+    Eq.congr Nat Nat (Nat.add c) a b h
+
+-- a = b → add a c = add b c
+def Nat.congr_add_right : ∀ (c : Nat) (a : Nat) (b : Nat),
+    Eq Nat a b → Eq Nat (Nat.add a c) (Nat.add b c) :=
+  fun (c : Nat) (a : Nat) (b : Nat) (h : Eq Nat a b) =>
+    Eq.rec.{0} Nat a
+      (fun (x : Nat) (_ : Eq Nat a x) => Eq Nat (Nat.add a c) (Nat.add x c))
+      (Eq.refl Nat (Nat.add a c))
+      b h
+
+-- a = b → mul c a = mul c b
+def Nat.congr_mul_left : ∀ (c : Nat) (a : Nat) (b : Nat),
+    Eq Nat a b → Eq Nat (Nat.mul c a) (Nat.mul c b) :=
+  fun (c : Nat) (a : Nat) (b : Nat) (h : Eq Nat a b) =>
+    Eq.congr Nat Nat (Nat.mul c) a b h
+
+-- a = b → mul a c = mul b c
+def Nat.congr_mul_right : ∀ (c : Nat) (a : Nat) (b : Nat),
+    Eq Nat a b → Eq Nat (Nat.mul a c) (Nat.mul b c) :=
+  fun (c : Nat) (a : Nat) (b : Nat) (h : Eq Nat a b) =>
+    Eq.rec.{0} Nat a
+      (fun (x : Nat) (_ : Eq Nat a x) => Eq Nat (Nat.mul a c) (Nat.mul x c))
+      (Eq.refl Nat (Nat.mul a c))
+      b h
+
+-----------------------------------------------------------------------
+-- 4. Addition lemmas
+-----------------------------------------------------------------------
+
+-- add zero n = n   (induction on n)
+def Nat.add_zero_left : ∀ (n : Nat), Eq Nat (Nat.add Nat.zero n) n :=
+  Nat.rec.{0}
+    (fun (n : Nat) => Eq Nat (Nat.add Nat.zero n) n)
+    (Eq.refl Nat Nat.zero)
+    (fun (n : Nat) (ih : Eq Nat (Nat.add Nat.zero n) n) =>
+      Nat.congr_succ (Nat.add Nat.zero n) n ih)
+
+-- add (succ m) n = succ (add m n)   (induction on n)
+def Nat.add_succ_left : ∀ (m : Nat) (n : Nat),
+    Eq Nat (Nat.add (Nat.succ m) n) (Nat.succ (Nat.add m n)) :=
+  fun (m : Nat) =>
+    Nat.rec.{0}
+      (fun (n : Nat) => Eq Nat (Nat.add (Nat.succ m) n) (Nat.succ (Nat.add m n)))
+      (Eq.refl Nat (Nat.succ m))
+      (fun (n : Nat) (ih : Eq Nat (Nat.add (Nat.succ m) n) (Nat.succ (Nat.add m n))) =>
+        Nat.congr_succ (Nat.add (Nat.succ m) n) (Nat.succ (Nat.add m n)) ih)
+
+-- add m n = add n m   (induction on n)
+def Nat.add_comm : ∀ (m : Nat) (n : Nat), Eq Nat (Nat.add m n) (Nat.add n m) :=
+  fun (m : Nat) =>
+    Nat.rec.{0}
+      (fun (n : Nat) => Eq Nat (Nat.add m n) (Nat.add n m))
+      (Eq.symm Nat (Nat.add Nat.zero m) m (Nat.add_zero_left m))
+      (fun (n : Nat) (ih : Eq Nat (Nat.add m n) (Nat.add n m)) =>
+        Eq.trans Nat
+          (Nat.succ (Nat.add m n))
+          (Nat.succ (Nat.add n m))
+          (Nat.add (Nat.succ n) m)
+          (Nat.congr_succ (Nat.add m n) (Nat.add n m) ih)
+          (Eq.symm Nat (Nat.add (Nat.succ n) m) (Nat.succ (Nat.add n m))
+                   (Nat.add_succ_left n m)))
+
+-- add (add a b) c = add a (add b c)   (induction on c)
+def Nat.add_assoc : ∀ (a : Nat) (b : Nat) (c : Nat),
+    Eq Nat (Nat.add (Nat.add a b) c) (Nat.add a (Nat.add b c)) :=
+  fun (a : Nat) (b : Nat) =>
+    Nat.rec.{0}
+      (fun (c : Nat) => Eq Nat (Nat.add (Nat.add a b) c) (Nat.add a (Nat.add b c)))
+      (Eq.refl Nat (Nat.add a b))
+      (fun (c : Nat) (ih : Eq Nat (Nat.add (Nat.add a b) c) (Nat.add a (Nat.add b c))) =>
+        Nat.congr_succ (Nat.add (Nat.add a b) c) (Nat.add a (Nat.add b c)) ih)
+
+-----------------------------------------------------------------------
+-- 5. Multiplication lemmas
+-----------------------------------------------------------------------
+
+-- mul zero n = zero   (induction on n)
+def Nat.mul_zero_left : ∀ (n : Nat), Eq Nat (Nat.mul Nat.zero n) Nat.zero :=
+  Nat.rec.{0}
+    (fun (n : Nat) => Eq Nat (Nat.mul Nat.zero n) Nat.zero)
+    (Eq.refl Nat Nat.zero)
+    (fun (n : Nat) (ih : Eq Nat (Nat.mul Nat.zero n) Nat.zero) =>
+      -- mul 0 (succ n) ≡ add 0 (mul 0 n) = add 0 0 = 0
+      Eq.trans Nat
+        (Nat.add Nat.zero (Nat.mul Nat.zero n))
+        (Nat.add Nat.zero Nat.zero)
+        Nat.zero
+        (Nat.congr_add_left Nat.zero (Nat.mul Nat.zero n) Nat.zero ih)
+        (Eq.refl Nat Nat.zero))
+
+-- mul (succ m) n = add n (mul m n)   (induction on n)
+def Nat.mul_succ_left : ∀ (m : Nat) (n : Nat),
+    Eq Nat (Nat.mul (Nat.succ m) n) (Nat.add n (Nat.mul m n)) :=
+  fun (m : Nat) =>
+    Nat.rec.{0}
+      (fun (n : Nat) => Eq Nat (Nat.mul (Nat.succ m) n) (Nat.add n (Nat.mul m n)))
+      -- Base: mul (succ m) 0 ≡ 0 = add 0 0 = add 0 (mul m 0)
+      (Eq.refl Nat Nat.zero)
+      -- Step: mul (succ m) (succ n) ≡ add (succ m) (mul (succ m) n)
+      --   need to show = add (succ n) (mul m (succ n))
+      --               = add (succ n) (add m (mul m n))
+      --   and add (succ m) (mul (succ m) n) = succ (add m (mul (succ m) n))
+      --     by IH, mul (succ m) n = add n (mul m n), so
+      --     = succ (add m (add n (mul m n)))
+      --     = succ (add (add m n) (mul m n))     -- by assoc
+      --     = succ (add (add n m) (mul m n))     -- by comm
+      --     = succ (add n (add m (mul m n)))     -- by assoc
+      --     = add (succ n) (add m (mul m n))     -- by add_succ_left
+      (fun (n : Nat) (ih : Eq Nat (Nat.mul (Nat.succ m) n) (Nat.add n (Nat.mul m n))) =>
+        -- Goal: add (succ m) (mul (succ m) n) = add (succ n) (add m (mul m n))
+        -- Step a: rewrite mul (succ m) n → add n (mul m n) using IH
+        let step_a : Eq Nat (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+                            (Nat.add (Nat.succ m) (Nat.add n (Nat.mul m n))) :=
+          Nat.congr_add_left (Nat.succ m) (Nat.mul (Nat.succ m) n) (Nat.add n (Nat.mul m n)) ih
+        in
+        -- Step b: add (succ m) X = succ (add m X)
+        let step_b : Eq Nat (Nat.add (Nat.succ m) (Nat.add n (Nat.mul m n)))
+                            (Nat.succ (Nat.add m (Nat.add n (Nat.mul m n)))) :=
+          Nat.add_succ_left m (Nat.add n (Nat.mul m n))
+        in
+        -- Step c: add m (add n Y) = add (add m n) Y  (symm assoc)
+        let step_c : Eq Nat (Nat.succ (Nat.add m (Nat.add n (Nat.mul m n))))
+                            (Nat.succ (Nat.add (Nat.add m n) (Nat.mul m n))) :=
+          Nat.congr_succ
+            (Nat.add m (Nat.add n (Nat.mul m n)))
+            (Nat.add (Nat.add m n) (Nat.mul m n))
+            (Eq.symm Nat
+              (Nat.add (Nat.add m n) (Nat.mul m n))
+              (Nat.add m (Nat.add n (Nat.mul m n)))
+              (Nat.add_assoc m n (Nat.mul m n)))
+        in
+        -- Step d: add m n = add n m  (comm)
+        let step_d : Eq Nat (Nat.succ (Nat.add (Nat.add m n) (Nat.mul m n)))
+                            (Nat.succ (Nat.add (Nat.add n m) (Nat.mul m n))) :=
+          Nat.congr_succ
+            (Nat.add (Nat.add m n) (Nat.mul m n))
+            (Nat.add (Nat.add n m) (Nat.mul m n))
+            (Nat.congr_add_right (Nat.mul m n)
+              (Nat.add m n) (Nat.add n m) (Nat.add_comm m n))
+        in
+        -- Step e: add (add n m) Y = add n (add m Y)  (assoc)
+        let step_e : Eq Nat (Nat.succ (Nat.add (Nat.add n m) (Nat.mul m n)))
+                            (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n)))) :=
+          Nat.congr_succ
+            (Nat.add (Nat.add n m) (Nat.mul m n))
+            (Nat.add n (Nat.add m (Nat.mul m n)))
+            (Nat.add_assoc n m (Nat.mul m n))
+        in
+        -- Step f: succ (add n X) = add (succ n) X  (symm add_succ_left)
+        let step_f : Eq Nat (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n))))
+                            (Nat.add (Nat.succ n) (Nat.add m (Nat.mul m n))) :=
+          Eq.symm Nat
+            (Nat.add (Nat.succ n) (Nat.add m (Nat.mul m n)))
+            (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n))))
+            (Nat.add_succ_left n (Nat.add m (Nat.mul m n)))
+        in
+        -- Chain: a ∘ b ∘ c ∘ d ∘ e ∘ f
+        let c_ab : Eq Nat (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+                          (Nat.succ (Nat.add m (Nat.add n (Nat.mul m n)))) :=
+          Eq.trans Nat
+            (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+            (Nat.add (Nat.succ m) (Nat.add n (Nat.mul m n)))
+            (Nat.succ (Nat.add m (Nat.add n (Nat.mul m n))))
+            step_a step_b
+        in
+        let c_abc : Eq Nat (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+                           (Nat.succ (Nat.add (Nat.add m n) (Nat.mul m n))) :=
+          Eq.trans Nat
+            (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+            (Nat.succ (Nat.add m (Nat.add n (Nat.mul m n))))
+            (Nat.succ (Nat.add (Nat.add m n) (Nat.mul m n)))
+            c_ab step_c
+        in
+        let c_abcd : Eq Nat (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+                            (Nat.succ (Nat.add (Nat.add n m) (Nat.mul m n))) :=
+          Eq.trans Nat
+            (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+            (Nat.succ (Nat.add (Nat.add m n) (Nat.mul m n)))
+            (Nat.succ (Nat.add (Nat.add n m) (Nat.mul m n)))
+            c_abc step_d
+        in
+        let c_abcde : Eq Nat (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+                             (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n)))) :=
+          Eq.trans Nat
+            (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+            (Nat.succ (Nat.add (Nat.add n m) (Nat.mul m n)))
+            (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n))))
+            c_abcd step_e
+        in
+        Eq.trans Nat
+          (Nat.add (Nat.succ m) (Nat.mul (Nat.succ m) n))
+          (Nat.succ (Nat.add n (Nat.add m (Nat.mul m n))))
+          (Nat.add (Nat.succ n) (Nat.add m (Nat.mul m n)))
+          c_abcde step_f)
+
+-- mul m n = mul n m   (induction on n)
+def Nat.mul_comm : ∀ (m : Nat) (n : Nat), Eq Nat (Nat.mul m n) (Nat.mul n m) :=
+  fun (m : Nat) =>
+    Nat.rec.{0}
+      (fun (n : Nat) => Eq Nat (Nat.mul m n) (Nat.mul n m))
+      -- Base: mul m 0 ≡ 0,  mul 0 m = 0 by mul_zero_left
+      (Eq.symm Nat (Nat.mul Nat.zero m) Nat.zero (Nat.mul_zero_left m))
+      -- Step: mul m (succ n) ≡ add m (mul m n)
+      --   IH: mul m n = mul n m
+      --   need: add m (mul m n) = mul (succ n) m
+      --   mul (succ n) m = add m (mul n m) by mul_succ_left
+      (fun (n : Nat) (ih : Eq Nat (Nat.mul m n) (Nat.mul n m)) =>
+        -- add m (mul m n) = add m (mul n m)
+        let step1 : Eq Nat (Nat.add m (Nat.mul m n)) (Nat.add m (Nat.mul n m)) :=
+          Nat.congr_add_left m (Nat.mul m n) (Nat.mul n m) ih
+        in
+        -- add m (mul n m) = mul (succ n) m  (symm mul_succ_left)
+        -- mul_succ_left n m : mul (succ n) m = add m (mul n m)
+        let step2 : Eq Nat (Nat.add m (Nat.mul n m)) (Nat.mul (Nat.succ n) m) :=
+          Eq.symm Nat (Nat.mul (Nat.succ n) m) (Nat.add m (Nat.mul n m))
+            (Nat.mul_succ_left n m)
+        in
+        Eq.trans Nat
+          (Nat.add m (Nat.mul m n))
+          (Nat.add m (Nat.mul n m))
+          (Nat.mul (Nat.succ n) m)
+          step1 step2)
+
+-----------------------------------------------------------------------
+-- 6. Right-distributivity: mul a (add b c) = add (mul a b) (mul a c)
+-----------------------------------------------------------------------
+
+def Nat.mul_distrib_right : ∀ (a : Nat) (b : Nat) (c : Nat),
+    Eq Nat (Nat.mul a (Nat.add b c)) (Nat.add (Nat.mul a b) (Nat.mul a c)) :=
+  fun (a : Nat) (b : Nat) =>
+    Nat.rec.{0}
+      (fun (c : Nat) => Eq Nat (Nat.mul a (Nat.add b c)) (Nat.add (Nat.mul a b) (Nat.mul a c)))
+      (Eq.refl Nat (Nat.mul a b))
+      (fun (c : Nat) (ih : Eq Nat (Nat.mul a (Nat.add b c)) (Nat.add (Nat.mul a b) (Nat.mul a c))) =>
+        -- Goal: add a (mul a (add b c)) = add (mul a b) (add a (mul a c))
+        -- step 1: rewrite mul a (add b c) → add (mul a b) (mul a c) in LHS
+        let step1 : Eq Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                           (Nat.add a (Nat.add (Nat.mul a b) (Nat.mul a c))) :=
+          Nat.congr_add_left a (Nat.mul a (Nat.add b c)) (Nat.add (Nat.mul a b) (Nat.mul a c)) ih
+        in
+        -- step 2: reassociate  add a (add X Y) → add (add a X) Y
+        let step2 : Eq Nat (Nat.add a (Nat.add (Nat.mul a b) (Nat.mul a c)))
+                           (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c)) :=
+          Eq.symm Nat (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c))
+                  (Nat.add a (Nat.add (Nat.mul a b) (Nat.mul a c)))
+                  (Nat.add_assoc a (Nat.mul a b) (Nat.mul a c))
+        in
+        -- step 3: commute  add a (mul a b) → add (mul a b) a
+        let step3 : Eq Nat (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c))
+                           (Nat.add (Nat.add (Nat.mul a b) a) (Nat.mul a c)) :=
+          Nat.congr_add_right (Nat.mul a c)
+            (Nat.add a (Nat.mul a b)) (Nat.add (Nat.mul a b) a)
+            (Nat.add_comm a (Nat.mul a b))
+        in
+        -- step 4: reassociate  add (add X a) Y → add X (add a Y)
+        let step4 : Eq Nat (Nat.add (Nat.add (Nat.mul a b) a) (Nat.mul a c))
+                           (Nat.add (Nat.mul a b) (Nat.add a (Nat.mul a c))) :=
+          Nat.add_assoc (Nat.mul a b) a (Nat.mul a c)
+        in
+        -- chain: step1 ∘ step2 ∘ step3 ∘ step4
+        let c12 : Eq Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                         (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c)) :=
+          Eq.trans Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                   (Nat.add a (Nat.add (Nat.mul a b) (Nat.mul a c)))
+                   (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c))
+                   step1 step2
+        in
+        let c123 : Eq Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                          (Nat.add (Nat.add (Nat.mul a b) a) (Nat.mul a c)) :=
+          Eq.trans Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                   (Nat.add (Nat.add a (Nat.mul a b)) (Nat.mul a c))
+                   (Nat.add (Nat.add (Nat.mul a b) a) (Nat.mul a c))
+                   c12 step3
+        in
+        Eq.trans Nat (Nat.add a (Nat.mul a (Nat.add b c)))
+                 (Nat.add (Nat.add (Nat.mul a b) a) (Nat.mul a c))
+                 (Nat.add (Nat.mul a b) (Nat.add a (Nat.mul a c)))
+                 c123 step4)
+
+-----------------------------------------------------------------------
+-- 7. Peano axioms
+-----------------------------------------------------------------------
+
+-- succ m = succ n → m = n   (apply pred via congr)
+def Nat.succ_injective : ∀ (m : Nat) (n : Nat),
+    Eq Nat (Nat.succ m) (Nat.succ n) → Eq Nat m n :=
+  fun (m : Nat) (n : Nat) (h : Eq Nat (Nat.succ m) (Nat.succ n)) =>
+    Eq.congr Nat Nat Nat.pred (Nat.succ m) (Nat.succ n) h
+
+-- zero ≠ succ n   (discriminator technique)
+-- Define a function mapping zero → True, succ _ → False
+def Nat.isZero : Nat → Prop :=
+  Nat.rec.{1}
+    (fun (_ : Nat) => Prop)
+    True
+    (fun (_ : Nat) (_ : Prop) => False)
+
+def Nat.zero_ne_succ : ∀ (n : Nat), Eq Nat Nat.zero (Nat.succ n) → False :=
+  fun (n : Nat) (h : Eq Nat Nat.zero (Nat.succ n)) =>
+    Eq.subst Nat Nat.zero (Nat.succ n) Nat.isZero h True.intro
+
+-----------------------------------------------------------------------
+-- 8. Multiplication identity and left-distributivity
+-----------------------------------------------------------------------
+
+-- mul m 1 = m   (by computation: mul m (succ 0) ≡ add m (mul m 0) ≡ add m 0 ≡ m)
+def Nat.mul_one_right : ∀ (m : Nat), Eq Nat (Nat.mul m (Nat.succ Nat.zero)) m :=
+  fun (m : Nat) => Eq.refl Nat m
+
+-- mul 1 m = m
+def Nat.mul_one_left : ∀ (m : Nat), Eq Nat (Nat.mul (Nat.succ Nat.zero) m) m :=
+  fun (m : Nat) =>
+    -- mul_succ_left 0 m : mul (succ 0) m = add m (mul 0 m)
+    -- mul_zero_left m : mul 0 m = 0
+    -- add m 0 ≡ m by computation
+    Eq.trans Nat
+      (Nat.mul (Nat.succ Nat.zero) m)
+      (Nat.add m (Nat.mul Nat.zero m))
+      m
+      (Nat.mul_succ_left Nat.zero m)
+      (Nat.congr_add_left m (Nat.mul Nat.zero m) Nat.zero (Nat.mul_zero_left m))
+
+-- mul (add a b) c = add (mul a c) (mul b c)
+def Nat.mul_distrib_left : ∀ (a : Nat) (b : Nat) (c : Nat),
+    Eq Nat (Nat.mul (Nat.add a b) c) (Nat.add (Nat.mul a c) (Nat.mul b c)) :=
+  fun (a : Nat) (b : Nat) (c : Nat) =>
+    let s1 : Eq Nat (Nat.mul (Nat.add a b) c) (Nat.mul c (Nat.add a b)) :=
+      Nat.mul_comm (Nat.add a b) c
+    in
+    let s2 : Eq Nat (Nat.mul c (Nat.add a b)) (Nat.add (Nat.mul c a) (Nat.mul c b)) :=
+      Nat.mul_distrib_right c a b
+    in
+    let s3 : Eq Nat (Nat.add (Nat.mul c a) (Nat.mul c b)) (Nat.add (Nat.mul a c) (Nat.mul b c)) :=
+      Eq.congr2 Nat Nat Nat Nat.add
+        (Nat.mul c a) (Nat.mul a c) (Nat.mul c b) (Nat.mul b c)
+        (Nat.mul_comm c a) (Nat.mul_comm c b)
+    in
+    Eq.trans Nat
+      (Nat.mul (Nat.add a b) c)
+      (Nat.add (Nat.mul c a) (Nat.mul c b))
+      (Nat.add (Nat.mul a c) (Nat.mul b c))
+      (Eq.trans Nat
+        (Nat.mul (Nat.add a b) c)
+        (Nat.mul c (Nat.add a b))
+        (Nat.add (Nat.mul c a) (Nat.mul c b))
+        s1 s2)
+      s3
+
+-----------------------------------------------------------------------
+-- 9. Associativity of multiplication
+-----------------------------------------------------------------------
+
+-- mul (mul a b) c = mul a (mul b c)   (induction on c)
+def Nat.mul_assoc : ∀ (a : Nat) (b : Nat) (c : Nat),
+    Eq Nat (Nat.mul (Nat.mul a b) c) (Nat.mul a (Nat.mul b c)) :=
+  fun (a : Nat) (b : Nat) =>
+    Nat.rec.{0}
+      (fun (c : Nat) => Eq Nat (Nat.mul (Nat.mul a b) c) (Nat.mul a (Nat.mul b c)))
+      -- Base: both sides reduce to zero
+      (Eq.refl Nat Nat.zero)
+      -- Step: mul (mul a b) (succ c) ≡ add (mul a b) (mul (mul a b) c)
+      --       mul a (mul b (succ c)) ≡ mul a (add b (mul b c))
+      --                               = add (mul a b) (mul a (mul b c))  by mul_distrib_right
+      (fun (c : Nat) (ih : Eq Nat (Nat.mul (Nat.mul a b) c) (Nat.mul a (Nat.mul b c))) =>
+        Eq.trans Nat
+          (Nat.add (Nat.mul a b) (Nat.mul (Nat.mul a b) c))
+          (Nat.add (Nat.mul a b) (Nat.mul a (Nat.mul b c)))
+          (Nat.mul a (Nat.add b (Nat.mul b c)))
+          (Nat.congr_add_left (Nat.mul a b) (Nat.mul (Nat.mul a b) c) (Nat.mul a (Nat.mul b c)) ih)
+          (Eq.symm Nat
+            (Nat.mul a (Nat.add b (Nat.mul b c)))
+            (Nat.add (Nat.mul a b) (Nat.mul a (Nat.mul b c)))
+            (Nat.mul_distrib_right a b (Nat.mul b c))))

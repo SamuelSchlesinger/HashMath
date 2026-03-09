@@ -166,7 +166,7 @@ private partial def sepBy (p : P α) (sep : P Unit) : P (List α) := fun s =>
 
 private def reservedWords : List String :=
   ["fun", "Sort", "Prop", "Type", "let", "in", "axiom", "def", "inductive",
-   "where", "mutual", "end", "variable"]
+   "where", "mutual", "end", "variable", "import"]
 
 private def identNonReserved : P String :=
   P.bind ident fun name =>
@@ -187,6 +187,23 @@ private def checkTrailingDotBrace (name : String) : P (String × Bool) := fun s 
       .ok ((name, false), s)
   else
     .ok ((name, false), s)
+
+private partial def collectStringChars (input : String) (pos : String.Pos.Raw) (acc : List Char)
+    : Except String (String × String.Pos.Raw) :=
+  if pos >= strEndPos input then .error "unterminated string literal"
+  else
+    let c := input.get pos
+    if c == '"' then .ok (String.mk acc.reverse, input.next pos)
+    else collectStringChars input (input.next pos) (c :: acc)
+
+private def stringLit : P String := fun s =>
+  let pos := skipWs s.input s.pos
+  if pos >= strEndPos s.input || s.input.get pos != '"' then
+    .error "expected string literal"
+  else
+    match collectStringChars s.input (s.input.next pos) [] with
+    | .ok (str, pos') => .ok (str, ⟨s.input, pos'⟩)
+    | .error e => .error e
 
 -- All parsing functions use explicit state-passing and P.bind.
 
@@ -419,6 +436,12 @@ def parseCommand : P Command := do
       let name ← ident
       return .print name
     | none =>
+    -- Try import
+    match ← P.tryP (keyword "import") with
+    | some () =>
+      let path ← stringLit
+      return .import_ path
+    | none =>
     -- Try axiom
     match ← P.tryP (keyword "axiom") with
     | some () =>
@@ -449,7 +472,7 @@ def parseCommand : P Command := do
       let d ← parseMutual
       return .decl d
     | none =>
-    P.fail "expected command (axiom, def, inductive, mutual, #check, #eval, #print)"
+    P.fail "expected command (import, axiom, def, inductive, mutual, #check, #eval, #print)"
 
 private partial def parseCommandsGo (input : String) (posBytes : Nat) (acc : List Command)
     : Except String (List Command) :=

@@ -69,6 +69,7 @@ inductive Command where
   | check : SExpr → Command        -- #check expr
   | eval : SExpr → Command         -- #eval expr
   | print : String → Command       -- #print name
+  | import_ : String → Command     -- import "path"
   deriving Repr
 
 end HashMath

@@ -1,0 +1,312 @@
+-- =====================================================================
+-- List — Linked lists and operations
+-- =====================================================================
+
+import "Nat.hm"
+import "Bool.hm"
+
+-----------------------------------------------------------------------
+-- List type
+-----------------------------------------------------------------------
+
+inductive List (A : Type) : Type where
+  | nil : List A
+  | cons : A → List A → List A
+
+-- List.rec.{u} : ∀ (A : Type) (motive : List A → Sort u)
+--   (minor_nil  : motive (List.nil A))
+--   (minor_cons : ∀ (a : A) (as : List A), motive as → motive (List.cons A a as))
+--   (major : List A),
+--   motive major
+
+-----------------------------------------------------------------------
+-- Basic operations
+-----------------------------------------------------------------------
+
+def List.length : ∀ (A : Type), List A → Nat :=
+  fun (A : Type) =>
+    List.rec.{1} A
+      (fun (_ : List A) => Nat)
+      Nat.zero
+      (fun (_ : A) (_ : List A) (ih : Nat) => Nat.succ ih)
+
+def List.append : ∀ (A : Type), List A → List A → List A :=
+  fun (A : Type) (xs : List A) (ys : List A) =>
+    List.rec.{1} A
+      (fun (_ : List A) => List A)
+      ys
+      (fun (a : A) (_ : List A) (ih : List A) => List.cons A a ih)
+      xs
+
+def List.map : ∀ (A : Type) (B : Type), (A → B) → List A → List B :=
+  fun (A : Type) (B : Type) (f : A → B) =>
+    List.rec.{1} A
+      (fun (_ : List A) => List B)
+      (List.nil B)
+      (fun (a : A) (_ : List A) (ih : List B) => List.cons B (f a) ih)
+
+def List.filter : ∀ (A : Type), (A → Bool) → List A → List A :=
+  fun (A : Type) (p : A → Bool) =>
+    List.rec.{1} A
+      (fun (_ : List A) => List A)
+      (List.nil A)
+      (fun (a : A) (_ : List A) (ih : List A) =>
+        Bool.ite (List A) (p a) (List.cons A a ih) ih)
+
+-----------------------------------------------------------------------
+-- Folds
+-----------------------------------------------------------------------
+
+def List.foldr : ∀ (A : Type) (B : Type), (A → B → B) → B → List A → B :=
+  fun (A : Type) (B : Type) (f : A → B → B) (init : B) =>
+    List.rec.{1} A
+      (fun (_ : List A) => B)
+      init
+      (fun (a : A) (_ : List A) (ih : B) => f a ih)
+
+-- CPS-based left fold: processes elements left-to-right
+def List.foldl : ∀ (A : Type) (B : Type), (B → A → B) → B → List A → B :=
+  fun (A : Type) (B : Type) (f : B → A → B) (init : B) (xs : List A) =>
+    List.rec.{1} A
+      (fun (_ : List A) => B → B)
+      (fun (acc : B) => acc)
+      (fun (a : A) (_ : List A) (k : B → B) (acc : B) => k (f acc a))
+      xs
+      init
+
+-----------------------------------------------------------------------
+-- More operations
+-----------------------------------------------------------------------
+
+-- Append-based reverse (amenable to inductive proofs)
+def List.reverse : ∀ (A : Type), List A → List A :=
+  fun (A : Type) =>
+    List.rec.{1} A
+      (fun (_ : List A) => List A)
+      (List.nil A)
+      (fun (a : A) (_ : List A) (ih : List A) =>
+        List.append A ih (List.cons A a (List.nil A)))
+
+def List.head : ∀ (A : Type), A → List A → A :=
+  fun (A : Type) (default : A) =>
+    List.rec.{1} A
+      (fun (_ : List A) => A)
+      default
+      (fun (a : A) (_ : List A) (_ : A) => a)
+
+def List.tail : ∀ (A : Type), List A → List A :=
+  fun (A : Type) =>
+    List.rec.{1} A
+      (fun (_ : List A) => List A)
+      (List.nil A)
+      (fun (_ : A) (as : List A) (_ : List A) => as)
+
+-----------------------------------------------------------------------
+-- Properties
+-----------------------------------------------------------------------
+
+-- append xs nil = xs   (induction on xs)
+def List.append_nil_right : ∀ (A : Type) (xs : List A),
+    Eq (List A) (List.append A xs (List.nil A)) xs :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) =>
+        Eq (List A) (List.append A xs (List.nil A)) xs)
+      -- Base: append nil nil ≡ nil
+      (Eq.refl (List A) (List.nil A))
+      -- Step: append (cons a xs) nil ≡ cons a (append xs nil)
+      --   need: cons a (append xs nil) = cons a xs
+      (fun (a : A) (xs : List A)
+          (ih : Eq (List A) (List.append A xs (List.nil A)) xs) =>
+        Eq.congr (List A) (List A) (List.cons A a)
+          (List.append A xs (List.nil A)) xs ih)
+
+-- append (append xs ys) zs = append xs (append ys zs)   (induction on xs)
+def List.append_assoc : ∀ (A : Type) (xs : List A) (ys : List A) (zs : List A),
+    Eq (List A) (List.append A (List.append A xs ys) zs)
+               (List.append A xs (List.append A ys zs)) :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) => ∀ (ys : List A) (zs : List A),
+        Eq (List A) (List.append A (List.append A xs ys) zs)
+                   (List.append A xs (List.append A ys zs)))
+      -- Base: both sides ≡ append ys zs
+      (fun (ys : List A) (zs : List A) =>
+        Eq.refl (List A) (List.append A ys zs))
+      -- Step: both sides ≡ cons a (...), use congr
+      (fun (a : A) (xs : List A)
+          (ih : ∀ (ys : List A) (zs : List A),
+            Eq (List A) (List.append A (List.append A xs ys) zs)
+                       (List.append A xs (List.append A ys zs)))
+          (ys : List A) (zs : List A) =>
+        Eq.congr (List A) (List A) (List.cons A a)
+          (List.append A (List.append A xs ys) zs)
+          (List.append A xs (List.append A ys zs))
+          (ih ys zs))
+
+-- length (append xs ys) = add (length xs) (length ys)   (induction on xs)
+def List.length_append : ∀ (A : Type) (xs : List A) (ys : List A),
+    Eq Nat (List.length A (List.append A xs ys))
+           (Nat.add (List.length A xs) (List.length A ys)) :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) => ∀ (ys : List A),
+        Eq Nat (List.length A (List.append A xs ys))
+               (Nat.add (List.length A xs) (List.length A ys)))
+      -- Base: length ys = add 0 (length ys)
+      (fun (ys : List A) =>
+        Eq.symm Nat (Nat.add Nat.zero (List.length A ys)) (List.length A ys)
+          (Nat.add_zero_left (List.length A ys)))
+      -- Step: chain congr_succ(ih) with symm(add_succ_left)
+      (fun (a : A) (xs : List A)
+          (ih : ∀ (ys : List A), Eq Nat (List.length A (List.append A xs ys))
+                                        (Nat.add (List.length A xs) (List.length A ys)))
+          (ys : List A) =>
+        Eq.trans Nat
+          (Nat.succ (List.length A (List.append A xs ys)))
+          (Nat.succ (Nat.add (List.length A xs) (List.length A ys)))
+          (Nat.add (Nat.succ (List.length A xs)) (List.length A ys))
+          (Nat.congr_succ
+            (List.length A (List.append A xs ys))
+            (Nat.add (List.length A xs) (List.length A ys))
+            (ih ys))
+          (Eq.symm Nat
+            (Nat.add (Nat.succ (List.length A xs)) (List.length A ys))
+            (Nat.succ (Nat.add (List.length A xs) (List.length A ys)))
+            (Nat.add_succ_left (List.length A xs) (List.length A ys))))
+
+-- map f (append xs ys) = append (map f xs) (map f ys)   (induction on xs)
+def List.map_append : ∀ (A : Type) (B : Type) (f : A → B) (xs : List A) (ys : List A),
+    Eq (List B) (List.map A B f (List.append A xs ys))
+               (List.append B (List.map A B f xs) (List.map A B f ys)) :=
+  fun (A : Type) (B : Type) (f : A → B) =>
+    List.rec.{0} A
+      (fun (xs : List A) => ∀ (ys : List A),
+        Eq (List B) (List.map A B f (List.append A xs ys))
+                   (List.append B (List.map A B f xs) (List.map A B f ys)))
+      (fun (ys : List A) => Eq.refl (List B) (List.map A B f ys))
+      (fun (a : A) (xs : List A)
+          (ih : ∀ (ys : List A), Eq (List B) (List.map A B f (List.append A xs ys))
+                                            (List.append B (List.map A B f xs) (List.map A B f ys)))
+          (ys : List A) =>
+        Eq.congr (List B) (List B)
+          (List.cons B (f a))
+          (List.map A B f (List.append A xs ys))
+          (List.append B (List.map A B f xs) (List.map A B f ys))
+          (ih ys))
+
+-- map id xs = xs   (induction on xs)
+def List.map_id : ∀ (A : Type) (xs : List A),
+    Eq (List A) (List.map A A (fun (x : A) => x) xs) xs :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) =>
+        Eq (List A) (List.map A A (fun (x : A) => x) xs) xs)
+      (Eq.refl (List A) (List.nil A))
+      (fun (a : A) (xs : List A)
+          (ih : Eq (List A) (List.map A A (fun (x : A) => x) xs) xs) =>
+        Eq.congr (List A) (List A) (List.cons A a)
+          (List.map A A (fun (x : A) => x) xs) xs ih)
+
+-- map g (map f xs) = map (fun x => g (f x)) xs   (induction on xs)
+def List.map_map : ∀ (A : Type) (B : Type) (C : Type)
+    (f : A → B) (g : B → C) (xs : List A),
+    Eq (List C) (List.map B C g (List.map A B f xs))
+               (List.map A C (fun (x : A) => g (f x)) xs) :=
+  fun (A : Type) (B : Type) (C : Type) (f : A → B) (g : B → C) =>
+    List.rec.{0} A
+      (fun (xs : List A) =>
+        Eq (List C) (List.map B C g (List.map A B f xs))
+                   (List.map A C (fun (x : A) => g (f x)) xs))
+      (Eq.refl (List C) (List.nil C))
+      (fun (a : A) (xs : List A)
+          (ih : Eq (List C) (List.map B C g (List.map A B f xs))
+                           (List.map A C (fun (x : A) => g (f x)) xs)) =>
+        Eq.congr (List C) (List C) (List.cons C (g (f a)))
+          (List.map B C g (List.map A B f xs))
+          (List.map A C (fun (x : A) => g (f x)) xs)
+          ih)
+
+-- length (map f xs) = length xs   (induction on xs)
+def List.length_map : ∀ (A : Type) (B : Type) (f : A → B) (xs : List A),
+    Eq Nat (List.length B (List.map A B f xs)) (List.length A xs) :=
+  fun (A : Type) (B : Type) (f : A → B) =>
+    List.rec.{0} A
+      (fun (xs : List A) =>
+        Eq Nat (List.length B (List.map A B f xs)) (List.length A xs))
+      (Eq.refl Nat Nat.zero)
+      (fun (a : A) (xs : List A)
+          (ih : Eq Nat (List.length B (List.map A B f xs)) (List.length A xs)) =>
+        Nat.congr_succ
+          (List.length B (List.map A B f xs))
+          (List.length A xs)
+          ih)
+
+-- reverse (append xs ys) = append (reverse ys) (reverse xs)   (induction on xs)
+def List.reverse_append : ∀ (A : Type) (xs : List A) (ys : List A),
+    Eq (List A) (List.reverse A (List.append A xs ys))
+               (List.append A (List.reverse A ys) (List.reverse A xs)) :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) => ∀ (ys : List A),
+        Eq (List A) (List.reverse A (List.append A xs ys))
+                   (List.append A (List.reverse A ys) (List.reverse A xs)))
+      -- Base: reverse (append nil ys) ≡ reverse ys
+      --       append (reverse ys) (reverse nil) ≡ append (reverse ys) nil
+      --   need: Eq.symm of append_nil_right
+      (fun (ys : List A) =>
+        Eq.symm (List A)
+          (List.append A (List.reverse A ys) (List.nil A))
+          (List.reverse A ys)
+          (List.append_nil_right A (List.reverse A ys)))
+      -- Step: chain congr(ih) with append_assoc
+      (fun (a : A) (xs : List A)
+          (ih : ∀ (ys : List A),
+            Eq (List A) (List.reverse A (List.append A xs ys))
+                       (List.append A (List.reverse A ys) (List.reverse A xs)))
+          (ys : List A) =>
+        Eq.trans (List A)
+          (List.append A (List.reverse A (List.append A xs ys))
+                        (List.cons A a (List.nil A)))
+          (List.append A (List.append A (List.reverse A ys) (List.reverse A xs))
+                        (List.cons A a (List.nil A)))
+          (List.append A (List.reverse A ys)
+                        (List.append A (List.reverse A xs)
+                                      (List.cons A a (List.nil A))))
+          (Eq.congr (List A) (List A)
+            (fun (z : List A) =>
+              List.append A z (List.cons A a (List.nil A)))
+            (List.reverse A (List.append A xs ys))
+            (List.append A (List.reverse A ys) (List.reverse A xs))
+            (ih ys))
+          (List.append_assoc A
+            (List.reverse A ys)
+            (List.reverse A xs)
+            (List.cons A a (List.nil A))))
+
+-- reverse (reverse xs) = xs   (induction on xs)
+def List.reverse_reverse : ∀ (A : Type) (xs : List A),
+    Eq (List A) (List.reverse A (List.reverse A xs)) xs :=
+  fun (A : Type) =>
+    List.rec.{0} A
+      (fun (xs : List A) =>
+        Eq (List A) (List.reverse A (List.reverse A xs)) xs)
+      -- Base: reverse (reverse nil) ≡ reverse nil ≡ nil
+      (Eq.refl (List A) (List.nil A))
+      -- Step: reverse (reverse (cons a xs))
+      --     ≡ reverse (append (reverse xs) [a])
+      --   By reverse_append: = append (reverse [a]) (reverse (reverse xs))
+      --                     ≡ cons a (reverse (reverse xs))
+      --   By congr(ih): = cons a xs
+      (fun (a : A) (xs : List A)
+          (ih : Eq (List A) (List.reverse A (List.reverse A xs)) xs) =>
+        Eq.trans (List A)
+          (List.reverse A (List.append A (List.reverse A xs)
+                                        (List.cons A a (List.nil A))))
+          (List.cons A a (List.reverse A (List.reverse A xs)))
+          (List.cons A a xs)
+          (List.reverse_append A
+            (List.reverse A xs)
+            (List.cons A a (List.nil A)))
+          (Eq.congr (List A) (List A) (List.cons A a)
+            (List.reverse A (List.reverse A xs)) xs ih))

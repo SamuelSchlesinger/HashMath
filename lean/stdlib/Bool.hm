@@ -1,0 +1,72 @@
+-- =====================================================================
+-- Bool — Boolean type and operations
+-- =====================================================================
+--
+-- Bool is in Type, so Bool.rec can eliminate to any Sort u.
+-- All operations defined via Bool.rec.
+
+-----------------------------------------------------------------------
+-- Boolean type
+-----------------------------------------------------------------------
+
+inductive Bool : Type where
+  | false : Bool
+  | true : Bool
+
+-- Bool.rec.{u} : ∀ (motive : Bool → Sort u)
+--   (minor_false : motive Bool.false)
+--   (minor_true  : motive Bool.true)
+--   (major : Bool),
+--   motive major
+
+-----------------------------------------------------------------------
+-- Basic operations
+-----------------------------------------------------------------------
+
+def Bool.and : Bool → Bool → Bool :=
+  fun (a : Bool) (b : Bool) =>
+    Bool.rec.{1}
+      (fun (_ : Bool) => Bool)
+      Bool.false     -- false ∧ b = false
+      b              -- true  ∧ b = b
+      a
+
+def Bool.or : Bool → Bool → Bool :=
+  fun (a : Bool) (b : Bool) =>
+    Bool.rec.{1}
+      (fun (_ : Bool) => Bool)
+      b              -- false ∨ b = b
+      Bool.true      -- true  ∨ b = true
+      a
+
+def Bool.not : Bool → Bool :=
+  fun (b : Bool) =>
+    Bool.rec.{1}
+      (fun (_ : Bool) => Bool)
+      Bool.true      -- not false = true
+      Bool.false     -- not true  = false
+      b
+
+-----------------------------------------------------------------------
+-- If-then-else (eliminates to any Type)
+-----------------------------------------------------------------------
+
+def Bool.ite : ∀ (A : Type), Bool → A → A → A :=
+  fun (A : Type) (b : Bool) (t : A) (f : A) =>
+    Bool.rec.{1}
+      (fun (_ : Bool) => A)
+      f              -- false branch
+      t              -- true branch
+      b
+
+-----------------------------------------------------------------------
+-- Decision to Bool
+-----------------------------------------------------------------------
+
+def Bool.xor : Bool → Bool → Bool :=
+  fun (a : Bool) (b : Bool) =>
+    Bool.rec.{1}
+      (fun (_ : Bool) => Bool)
+      b                   -- false xor b = b
+      (Bool.not b)        -- true  xor b = not b
+      a

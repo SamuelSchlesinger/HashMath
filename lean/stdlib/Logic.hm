@@ -1,0 +1,149 @@
+-- =====================================================================
+-- Logic — Propositional logic foundations
+-- =====================================================================
+--
+-- All elimination principles are proven via recursors.
+-- No axioms.
+
+-----------------------------------------------------------------------
+-- Truth
+-----------------------------------------------------------------------
+
+inductive True : Prop where
+  | intro : True
+
+-----------------------------------------------------------------------
+-- Falsehood
+-----------------------------------------------------------------------
+
+inductive False : Prop where
+
+-- False has no constructors, so False.rec eliminates to any Sort.
+def False.elim : ∀ (P : Prop), False → P :=
+  fun (P : Prop) (h : False) =>
+    False.rec.{0} (fun (_ : False) => P) h
+
+-----------------------------------------------------------------------
+-- Conjunction
+-----------------------------------------------------------------------
+
+inductive And (P : Prop) (Q : Prop) : Prop where
+  | intro : P → Q → And P Q
+
+-- And has a single constructor with Prop-valued fields,
+-- so large elimination is allowed.
+def And.fst : ∀ (P : Prop) (Q : Prop), And P Q → P :=
+  fun (P : Prop) (Q : Prop) (h : And P Q) =>
+    And.rec.{0} P Q
+      (fun (_ : And P Q) => P)
+      (fun (a : P) (_ : Q) => a)
+      h
+
+def And.snd : ∀ (P : Prop) (Q : Prop), And P Q → Q :=
+  fun (P : Prop) (Q : Prop) (h : And P Q) =>
+    And.rec.{0} P Q
+      (fun (_ : And P Q) => Q)
+      (fun (_ : P) (b : Q) => b)
+      h
+
+def And.swap : ∀ (P : Prop) (Q : Prop), And P Q → And Q P :=
+  fun (P : Prop) (Q : Prop) (h : And P Q) =>
+    And.rec.{0} P Q
+      (fun (_ : And P Q) => And Q P)
+      (fun (a : P) (b : Q) => And.intro Q P b a)
+      h
+
+-----------------------------------------------------------------------
+-- Disjunction
+-----------------------------------------------------------------------
+
+inductive Or (P : Prop) (Q : Prop) : Prop where
+  | inl : P → Or P Q
+  | inr : Q → Or P Q
+
+-- Or has two constructors, so elimination is restricted to Prop.
+def Or.elim : ∀ (P : Prop) (Q : Prop) (R : Prop),
+    Or P Q → (P → R) → (Q → R) → R :=
+  fun (P : Prop) (Q : Prop) (R : Prop)
+      (h : Or P Q) (f : P → R) (g : Q → R) =>
+    Or.rec P Q
+      (fun (_ : Or P Q) => R)
+      (fun (a : P) => f a)
+      (fun (b : Q) => g b)
+      h
+
+def Or.swap : ∀ (P : Prop) (Q : Prop), Or P Q → Or Q P :=
+  fun (P : Prop) (Q : Prop) (h : Or P Q) =>
+    Or.elim P Q (Or Q P) h
+      (fun (a : P) => Or.inr Q P a)
+      (fun (b : Q) => Or.inl Q P b)
+
+-----------------------------------------------------------------------
+-- Negation
+-----------------------------------------------------------------------
+
+def Not : Prop → Prop :=
+  fun (P : Prop) => P → False
+
+def Not.intro : ∀ (P : Prop), (P → False) → Not P :=
+  fun (P : Prop) (h : P → False) => h
+
+def absurd : ∀ (P : Prop) (Q : Prop), P → Not P → Q :=
+  fun (P : Prop) (Q : Prop) (hp : P) (hn : Not P) =>
+    False.elim Q (hn hp)
+
+def dne_intro : ∀ (P : Prop), P → Not (Not P) :=
+  fun (P : Prop) (p : P) (np : Not P) => np p
+
+-----------------------------------------------------------------------
+-- Existential quantification
+-----------------------------------------------------------------------
+
+inductive Exists (A : Type) (P : A → Prop) : Prop where
+  | intro : ∀ (w : A), P w → Exists A P
+
+-- Exists has a Type-valued field, so elimination is restricted to Prop.
+def Exists.elim : ∀ (A : Type) (P : A → Prop) (Q : Prop),
+    Exists A P → (∀ (w : A), P w → Q) → Q :=
+  fun (A : Type) (P : A → Prop) (Q : Prop)
+      (h : Exists A P) (f : ∀ (w : A), P w → Q) =>
+    Exists.rec A P
+      (fun (_ : Exists A P) => Q)
+      (fun (w : A) (pw : P w) => f w pw)
+      h
+
+-----------------------------------------------------------------------
+-- If and only if
+-----------------------------------------------------------------------
+
+def Iff : Prop → Prop → Prop :=
+  fun (P : Prop) (Q : Prop) => And (P → Q) (Q → P)
+
+def Iff.intro : ∀ (P : Prop) (Q : Prop), (P → Q) → (Q → P) → Iff P Q :=
+  fun (P : Prop) (Q : Prop) (f : P → Q) (g : Q → P) =>
+    And.intro (P → Q) (Q → P) f g
+
+def Iff.mp : ∀ (P : Prop) (Q : Prop), Iff P Q → P → Q :=
+  fun (P : Prop) (Q : Prop) (h : Iff P Q) =>
+    And.fst (P → Q) (Q → P) h
+
+def Iff.mpr : ∀ (P : Prop) (Q : Prop), Iff P Q → Q → P :=
+  fun (P : Prop) (Q : Prop) (h : Iff P Q) =>
+    And.snd (P → Q) (Q → P) h
+
+-----------------------------------------------------------------------
+-- Derived reasoning principles
+-----------------------------------------------------------------------
+
+-- (P → Q) → ¬Q → ¬P
+def contrapositive : ∀ (P : Prop) (Q : Prop), (P → Q) → Not Q → Not P :=
+  fun (P : Prop) (Q : Prop) (f : P → Q) (nq : Not Q) (p : P) =>
+    nq (f p)
+
+-- ¬(P ∨ Q) → ¬P ∧ ¬Q
+def de_morgan_not_or : ∀ (P : Prop) (Q : Prop),
+    Not (Or P Q) → And (Not P) (Not Q) :=
+  fun (P : Prop) (Q : Prop) (h : Not (Or P Q)) =>
+    And.intro (Not P) (Not Q)
+      (fun (p : P) => h (Or.inl P Q p))
+      (fun (q : Q) => h (Or.inr P Q q))

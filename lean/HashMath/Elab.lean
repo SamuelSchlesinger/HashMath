@@ -309,6 +309,8 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
       return (cb, .printed name info)
     | none => .error s!"unknown name '{name}'"
 
+  | .import_ path => .error s!"import '{path}' must be resolved at IO level (use file processing)"
+
 private def processCommandList (cb : Codebase) : List Command → List ElabResult →
     Except String (Codebase × List ElabResult)
   | [], results => .ok (cb, results.reverse)

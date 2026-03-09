@@ -1,0 +1,13 @@
+-- =====================================================================
+-- Prelude — Import everything from the standard library
+-- =====================================================================
+
+import "Logic.hm"
+import "Equality.hm"
+import "Bool.hm"
+import "Unit.hm"
+import "Prod.hm"
+import "Sum.hm"
+import "Option.hm"
+import "Nat.hm"
+import "List.hm"

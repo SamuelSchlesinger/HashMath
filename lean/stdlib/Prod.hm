@@ -1,0 +1,46 @@
+-- =====================================================================
+-- Prod — Product types
+-- =====================================================================
+
+-----------------------------------------------------------------------
+-- Product type
+-----------------------------------------------------------------------
+
+inductive Prod (A : Type) (B : Type) : Type where
+  | mk : A → B → Prod A B
+
+-- Prod.rec.{u} : ∀ (A : Type) (B : Type)
+--   (motive : Prod A B → Sort u)
+--   (minor  : ∀ (a : A) (b : B), motive (Prod.mk A B a b))
+--   (major  : Prod A B),
+--   motive major
+
+def Prod.fst : ∀ (A : Type) (B : Type), Prod A B → A :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Prod.rec.{1} A B
+      (fun (_ : Prod A B) => A)
+      (fun (a : A) (_ : B) => a)
+      p
+
+def Prod.snd : ∀ (A : Type) (B : Type), Prod A B → B :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Prod.rec.{1} A B
+      (fun (_ : Prod A B) => B)
+      (fun (_ : A) (b : B) => b)
+      p
+
+def Prod.map : ∀ (A : Type) (B : Type) (C : Type) (D : Type),
+    (A → C) → (B → D) → Prod A B → Prod C D :=
+  fun (A : Type) (B : Type) (C : Type) (D : Type)
+      (f : A → C) (g : B → D) (p : Prod A B) =>
+    Prod.rec.{1} A B
+      (fun (_ : Prod A B) => Prod C D)
+      (fun (a : A) (b : B) => Prod.mk C D (f a) (g b))
+      p
+
+def Prod.swap : ∀ (A : Type) (B : Type), Prod A B → Prod B A :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Prod.rec.{1} A B
+      (fun (_ : Prod A B) => Prod B A)
+      (fun (a : A) (b : B) => Prod.mk B A b a)
+      p

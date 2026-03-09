@@ -1,0 +1,77 @@
+-- =====================================================================
+-- Equality — Propositional equality and its properties
+-- =====================================================================
+--
+-- All lemmas proven via Eq.rec. No axioms.
+--
+-- Eq.rec.{u} : ∀ (A : Type) (a : A)
+--   (motive : ∀ (b : A), Eq A a b → Sort u)
+--   (minor  : motive a (Eq.refl A a))
+--   (b : A) (major : Eq A a b),
+--   motive b major
+
+-----------------------------------------------------------------------
+-- Propositional equality (indexed inductive)
+-----------------------------------------------------------------------
+
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-----------------------------------------------------------------------
+-- Core properties
+-----------------------------------------------------------------------
+
+-- a = b → b = a
+def Eq.symm : ∀ (A : Type) (a : A) (b : A), Eq A a b → Eq A b a :=
+  fun (A : Type) (a : A) (b : A) (h : Eq A a b) =>
+    Eq.rec.{0} A a
+      (fun (x : A) (_ : Eq A a x) => Eq A x a)
+      (Eq.refl A a)
+      b h
+
+-- a = b → b = c → a = c
+def Eq.trans : ∀ (A : Type) (a : A) (b : A) (c : A),
+    Eq A a b → Eq A b c → Eq A a c :=
+  fun (A : Type) (a : A) (b : A) (c : A)
+      (h1 : Eq A a b) (h2 : Eq A b c) =>
+    Eq.rec.{0} A b
+      (fun (x : A) (_ : Eq A b x) => Eq A a x)
+      h1
+      c h2
+
+-- f a = f b given a = b
+def Eq.congr : ∀ (A : Type) (B : Type) (f : A → B) (a : A) (b : A),
+    Eq A a b → Eq B (f a) (f b) :=
+  fun (A : Type) (B : Type) (f : A → B) (a : A) (b : A) (h : Eq A a b) =>
+    Eq.rec.{0} A a
+      (fun (x : A) (_ : Eq A a x) => Eq B (f a) (f x))
+      (Eq.refl B (f a))
+      b h
+
+-- Leibniz substitution: a = b → P a → P b
+def Eq.subst : ∀ (A : Type) (a : A) (b : A) (P : A → Prop),
+    Eq A a b → P a → P b :=
+  fun (A : Type) (a : A) (b : A) (P : A → Prop) (h : Eq A a b) (pa : P a) =>
+    Eq.rec.{0} A a
+      (fun (x : A) (_ : Eq A a x) => P x)
+      pa
+      b h
+
+-----------------------------------------------------------------------
+-- Derived properties
+-----------------------------------------------------------------------
+
+-- Congruence in two-argument functions
+def Eq.congr2 : ∀ (A : Type) (B : Type) (C : Type) (f : A → B → C)
+    (a1 : A) (a2 : A) (b1 : B) (b2 : B),
+    Eq A a1 a2 → Eq B b1 b2 → Eq C (f a1 b1) (f a2 b2) :=
+  fun (A : Type) (B : Type) (C : Type) (f : A → B → C)
+      (a1 : A) (a2 : A) (b1 : B) (b2 : B)
+      (ha : Eq A a1 a2) (hb : Eq B b1 b2) =>
+    let step1 : Eq C (f a1 b1) (f a2 b1) :=
+      Eq.congr A C (fun (x : A) => f x b1) a1 a2 ha
+    in
+    let step2 : Eq C (f a2 b1) (f a2 b2) :=
+      Eq.congr B C (f a2) b1 b2 hb
+    in
+    Eq.trans C (f a1 b1) (f a2 b1) (f a2 b2) step1 step2
