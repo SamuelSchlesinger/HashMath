@@ -458,10 +458,10 @@ def idTerm2 : Expr := .lam (Expr.sort Level.zero) (.bvar 0)
 
 #eval do
   -- Build a large app spine and verify getAppArgs works efficiently
-  let fn := Expr.sort Level.zero
-  let arg := Expr.sort Level.zero
+  let fn : Expr := Expr.sort Level.zero
+  let arg : Expr := Expr.sort Level.zero
   let n := 1000
-  let bigApp := (List.range n).foldl (fun e _ => Expr.app e arg) fn
+  let bigApp : Expr := (List.range n).foldl (fun e _ => Expr.app e arg) fn
   let args := bigApp.getAppArgs
   if args.length == n then
     IO.println s!"getAppArgs O(n) with {n} args: OK"
@@ -1302,7 +1302,7 @@ private def byteArrayToHex (bs : ByteArray) : String :=
   -- Define add : Nat → Nat → Nat
   -- add m n = Nat.rec (motive := λ _. Nat) n (λ _ ih. succ ih) m
   let motive := Expr.lam (.const natTypeHash []) (.const natTypeHash [])
-  let minor_zero := Expr.bvar 0  -- n (the second arg, bound outside)
+  let minor_zero : Expr := Expr.bvar 0  -- n (the second arg, bound outside)
   let minor_succ := Expr.lam (.const natTypeHash []) (Expr.lam (.const natTypeHash []) (succ (.bvar 0)))
 
   -- add = λ (m : Nat) (n : Nat). Nat.rec motive n (λ _ ih. succ ih) m

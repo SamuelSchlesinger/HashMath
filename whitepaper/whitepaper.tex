@@ -55,6 +55,7 @@
 \newcommand{\mdata}{\textsf{mdata}}
 \newcommand{\whnf}{\textsf{whnf}}
 \newcommand{\Quot}{\textsf{Quot}}
+\newcommand{\hrefE}{\textsf{href}}
 
 \title{\textbf{HashMath: A Content-Addressed Calculus of Inductive Constructions\\ for Permissionless Formal Mathematics}}
 \author{Samuel Schlesinger}
@@ -214,12 +215,13 @@ content-addressed setting.
 Lean~4's kernel defines \texttt{Expr} with 12 constructors.
 HashMath retains 8 of these (those that carry type-theoretic content) and excludes the
 4 that serve only elaboration, metaprogramming, or syntactic sugar.
-One new constructor, $\textsf{iref}$, is added for block-relative references in mutual
-inductive definitions, for 9 constructors total.
+Two new constructors are added: $\textsf{iref}$ for block-relative references in mutual
+inductive definitions, and $\hrefE$ for hash-referenced subterms in the storage layer
+(Section~\ref{sec:subterm-hashing}), for 10 constructors total.
 
 \begin{definition}[HashMath expression grammar]
 \label{def:expr}
-HashMath terms are defined by the following grammar:
+HashMath terms are defined by the following grammar, parameterized by a type $\alpha$:
 \[
   e \;\;::=\;\;
     \begin{aligned}[t]
@@ -231,12 +233,20 @@ HashMath terms are defined by the following grammar:
       \mid\;\; &\forallE(e_T, e_b) \\
       \mid\;\; &\letE(e_T, e_v, e_b) \\
       \mid\;\; &\proj(h, i, e) \\
-      \mid\;\; &\textsf{iref}(k, \bar{u})
+      \mid\;\; &\textsf{iref}(k, \bar{u}) \\
+      \mid\;\; &\hrefE(a)
     \end{aligned}
 \]
 where $n \in \mathbb{N}$, $u$ is a universe level (Section~\ref{sec:levels}),
 $h \in \{0,1\}^{256}$ is a content hash, $\bar{u}$ is a list of universe levels,
-$i \in \mathbb{N}$, and $k \in \mathbb{N}$ is a block-relative type index.
+$i \in \mathbb{N}$, $k \in \mathbb{N}$ is a block-relative type index,
+and $a : \alpha$ is a hash reference value whose type is determined by the phantom parameter $\alpha$.
+
+When $\alpha = \bot$ (the empty type), the $\hrefE$ constructor is uninhabitable,
+guaranteeing at the type level that kernel expressions contain no hash references.
+When $\alpha = \textsf{Hash}$ (32-byte SHA-256 digests), $\hrefE$ carries a content hash
+pointing to a stored subterm.
+This phantom-type discipline ensures that hash references can never reach the type checker.
 \end{definition}
 
 The constructors are:
@@ -257,6 +267,9 @@ The constructors are:
   \item $\proj(h, i, e)$ --- projection of the $i$-th field from a structure whose inductive type has hash $h$, applied to term $e$.
   \item $\textsf{iref}(k, \bar{u})$ --- a block-relative reference to the $k$-th type within a mutual inductive block, instantiated at universe levels $\bar{u}$.
         Used inside constructor types before the block hash is known; resolved to $\const$ when the block is registered (Section~\ref{sec:mutual}).
+  \item $\hrefE(a)$ --- a hash reference to a stored subterm.
+        Present only in the storage/wire format ($\alpha = \textsf{Hash}$); absent from kernel terms ($\alpha = \bot$).
+        See Section~\ref{sec:subterm-hashing}.
 \end{itemize}
 
 \paragraph{Excluded constructors.}
@@ -290,12 +303,14 @@ The four excluded constructors are:
 \texttt{mdata}   & Metadata             & ---        & Elaboration only \\
 \texttt{proj}    & Projection           & \checkmark & \\
 ---              & Block-relative ref   & \checkmark & \texttt{iref}: resolved to \texttt{const} \\
+---              & Hash reference       & \checkmark & \texttt{href}: storage layer only ($\alpha{=}\bot$ blocks kernel use) \\
 \hline
 \end{tabular}
 \caption{Lean~4 \texttt{Expr} constructors and their status in HashMath.
   Of the 12 Lean constructors, 8 are retained and 4 are
-  excluded (elaboration or syntactic sugar). One new constructor (\texttt{iref}) is added,
-  for 9 total.}
+  excluded (elaboration or syntactic sugar). Two new constructors (\texttt{iref} and \texttt{href}) are added,
+  for 10 total. The \texttt{href} constructor is parameterized by a phantom type, making it
+  uninhabitable in kernel terms.}
 \label{tab:constructors}
 \end{table}
 
@@ -767,11 +782,14 @@ where $h_B$ is the block hash, $i$ is the type index within the block, and $j$ i
 
 \begin{remark}
 The tag bytes are chosen so that levels (\texttt{0x00}--\texttt{0x04}),
-expressions (\texttt{0x10}--\texttt{0x18}), declarations (\texttt{0x20}--\texttt{0x23}),
+expressions (\texttt{0x10}--\texttt{0x18}), the storage-layer hash reference (\texttt{0x19}),
+declarations (\texttt{0x20}--\texttt{0x23}),
 and derived entities (\texttt{0x30}--\texttt{0x32})
 occupy disjoint ranges.
 This ensures that no term can collide with a level, declaration, or derived entity at the SHA-256 input level,
 even before considering structural differences.
+The \texttt{0x19} tag is used only in the stored wire format for $\hrefE$ nodes
+(Section~\ref{sec:subterm-hashing}); it never appears in canonical serialization or hash computation.
 \end{remark}
 
 Several design decisions are critical:
@@ -944,6 +962,121 @@ security against collision attacks (the birthday bound for a 256-bit hash), the 
 terms (one trillion) is negligible ($\approx 2^{-176}$).
 
 
+\subsection{Subterm-Level Hash-Consing}
+\label{sec:subterm-hashing}
+
+The hashing scheme described above assigns a content hash to each \emph{declaration}.
+But CIC proof terms are deeply nested trees that often share subterms---the type
+$\Nat \to \Nat$ may appear thousands of times across a library.
+At the declaration level, these shared subterms are duplicated in every serialized declaration
+that contains them.
+
+HashMath extends the Merkle DAG from declarations down to \emph{subterms}.
+When a declaration is prepared for storage or transmission, a \emph{shatter} operation
+replaces large subterms with $\hrefE$ nodes carrying the subterm's content hash.
+Each replaced subterm is serialized independently and stored as a separate entry
+in the DHT, keyed by its hash.
+
+\begin{definition}[Shatter and reassemble]
+\label{def:shatter}
+Let $\theta \in \mathbb{N}$ be a size threshold (the reference implementation uses $\theta = 33$,
+the cost of one $\hrefE$ node: 1 tag byte + 32 hash bytes).
+The \emph{shatter} operation $\textsf{shatter}_\theta : \textsf{Expr} \to \textsf{Expr}_{\textsf{Hash}} \times \textsf{SubtermStore}$
+traverses a closed expression bottom-up.
+For each subterm $e$ whose canonical serialization exceeds $\theta$ bytes:
+\begin{enumerate}[nosep]
+  \item Compute $h = \hash(e)$ and the canonical byte serialization $b = \textsf{serialize}(e)$.
+  \item Store the mapping $h \mapsto b$ in the \textsf{SubtermStore}.
+  \item Replace $e$ in the parent with $\hrefE(h)$.
+\end{enumerate}
+The inverse operation $\textsf{reassemble} : \textsf{Expr}_{\textsf{Hash}} \times \textsf{SubtermStore} \to \textsf{Expr}$
+resolves every $\hrefE(h)$ by deserializing the corresponding entry from the store.
+\end{definition}
+
+\paragraph{Phantom type safety.}
+The expression type is parameterized as $\textsf{Expr}(\alpha)$.
+Kernel operations (type inference, definitional equality, reduction) work with
+$\textsf{Expr}(\bot)$, where $\bot$ is an empty type.
+Since $\hrefE : \alpha \to \textsf{Expr}(\alpha)$ requires an inhabitant of $\alpha$,
+and $\bot$ has none, the $\hrefE$ constructor is \emph{statically uninhabitable}
+in kernel code---no match arm, no runtime check, no possibility of a hash reference
+reaching the type checker.
+The storage layer works with $\textsf{Expr}(\textsf{Hash})$, where $\textsf{Hash}$
+is the 32-byte digest type.
+An embedding $\textsf{Expr}(\bot) \hookrightarrow \textsf{Expr}(\alpha)$ is provided
+for safe upcast.
+
+\paragraph{Hash preservation.}
+Shattering does not change a term's content hash.
+Both $\hash(e)$ and $\hash(\textsf{reassemble}(\textsf{shatter}_\theta(e)))$ equal the same value,
+because $\textsf{reassemble}$ recovers the original term exactly, and canonical serialization
+is deterministic.
+The stored subterm entries use the \emph{canonical} serialization (no $\hrefE$ nodes),
+so each entry is self-contained.
+
+\paragraph{Deduplication.}
+Subterm entries are keyed by content hash.
+If two declarations share a subterm, both produce the same hash for that subterm,
+and the DHT stores it once.
+At scale, this provides global subterm compression: the $\Nat \to \Nat$ type, the
+recursor for $\textsf{List}$, or a standard proof pattern that recurs across thousands
+of declarations is stored \emph{exactly once} in the entire network.
+
+\paragraph{Wire format.}
+Stored declarations use a variant serialization in which $\hrefE$ nodes are encoded
+with tag \texttt{0x19} followed by 32 raw hash bytes.
+All other constructors use the same tags as canonical serialization.
+The format is backward-compatible: declarations without $\hrefE$ nodes are valid
+in both the canonical and stored formats, so older nodes that predate subterm
+hash-consing can still be read without modification.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+    node/.style={draw, rounded corners, font=\small, fill=blue!6, minimum width=1.6cm, align=center},
+    hrefnode/.style={draw, rounded corners, font=\small, fill=purple!12, minimum width=1.6cm, align=center},
+    subterm/.style={draw, rounded corners, font=\small, fill=green!10, minimum width=1.6cm, align=center},
+    >=Stealth
+  ]
+  % Original
+  \node at (-4.5, 3.2) {\textbf{Before shatter}};
+  \node[node] (lam) at (-4.5, 2.2) {$\lam$};
+  \node[node] (fa) at (-5.5, 0.8) {$\forallE$};
+  \node[node] (bv) at (-3.5, 0.8) {$\bvar(0)$};
+  \node[node] (nat1) at (-6.3, -0.4) {$\Nat$};
+  \node[node] (nat2) at (-4.7, -0.4) {$\Nat$};
+  \draw[->] (lam) -- (fa);
+  \draw[->] (lam) -- (bv);
+  \draw[->] (fa) -- (nat1);
+  \draw[->] (fa) -- (nat2);
+
+  % Shattered
+  \node at (1.5, 3.2) {\textbf{After shatter}};
+  \node[node] (lam2) at (1.5, 2.2) {$\lam$};
+  \node[hrefnode] (hr) at (0.5, 0.8) {$\hrefE(h_1)$};
+  \node[node] (bv2) at (2.5, 0.8) {$\bvar(0)$};
+  \draw[->] (lam2) -- (hr);
+  \draw[->] (lam2) -- (bv2);
+
+  % Store
+  \node at (6.5, 3.2) {\textbf{SubtermStore}};
+  \node[subterm] (s1) at (6.5, 1.8) {$h_1 \mapsto$};
+  \node[node] (fa2) at (6.5, 0.6) {$\forallE$};
+  \node[node] (nat3) at (5.7, -0.4) {$\Nat$};
+  \node[node] (nat4) at (7.3, -0.4) {$\Nat$};
+  \draw[->] (s1) -- (fa2);
+  \draw[->] (fa2) -- (nat3);
+  \draw[->] (fa2) -- (nat4);
+\end{tikzpicture}
+\caption{Subterm-level hash-consing.
+  The identity function $\lambda(n{:}\Nat{\to}\Nat).\,n$ is shattered:
+  the domain $\Nat \to \Nat$ (which exceeds the 33-byte threshold)
+  is replaced by a hash reference $\hrefE(h_1)$ and stored separately.
+  If another declaration shares the same subterm, it references the same $h_1$ entry---stored once globally.}
+\label{fig:shatter}
+\end{figure}
+
+
 %% ============================================================
 \section{Verification and Trust}
 \label{sec:trust}
@@ -1075,6 +1208,8 @@ The hashset is designed for decentralized storage and distribution:
 Terms are serialized in a compact binary format for storage and transmission.
 The serialization must be canonical (deterministic) to ensure that hash computation is consistent
 across implementations.
+Subterm-level hash-consing (Section~\ref{sec:subterm-hashing}) extends this model
+to individual subterms, enabling fine-grained deduplication across the entire knowledge base.
 
 \subsection{The Type-to-Inhabitants Index}
 \label{sec:type-index}
@@ -1378,7 +1513,8 @@ Hashing deep dependency trees requires traversing large Merkle DAGs.
 Several standard techniques address this:
 \begin{itemize}[nosep]
   \item \textbf{Caching}: once a term's hash is computed, it is stored and never recomputed.
-  \item \textbf{Memoization}: shared subterms (which are common in CIC terms) are hashed once.
+  \item \textbf{Subterm hash-consing}: shared subterms are stored once in the DHT and referenced
+    by hash (Section~\ref{sec:subterm-hashing}), reducing both storage and network transfer.
   \item \textbf{Incremental verification}: when verifying a new term, only the new term and its
     immediate definition need type-checking; dependencies have already been verified.
 \end{itemize}
@@ -1471,10 +1607,15 @@ policy layer of any deployment.
 
 Relatedly, tactic-elaborated proof terms can be very large---a simple \texttt{omega} call
 may expand to thousands of kernel steps.
-DAG sharing (deduplicating shared subterms by hash) and compression can significantly
-reduce storage costs.
-The content-addressed structure naturally enables deduplication: identical subterms that
-appear across many proofs are stored exactly once.
+The subterm-level hash-consing mechanism (Section~\ref{sec:subterm-hashing}) directly
+addresses this: when a declaration is shattered for storage, shared subterms across
+all declarations in the network are stored exactly once.
+A type like $\Nat \to \Nat$ or a recursor application pattern that recurs in thousands
+of proofs occupies a single DHT entry, referenced by hash everywhere else.
+This transforms the storage cost from $O(n \cdot s)$ (where $n$ is the number of
+declarations and $s$ is the average subterm size) to $O(n + s')$ (where $s'$ is the
+number of \emph{unique} subterms), providing significant compression for large libraries
+of tactic-elaborated proofs.
 
 \subsection{Axiom Identity Across Systems}
 \label{sec:axiom-identity}
@@ -1606,18 +1747,27 @@ variable-length fields use LEB128 length prefixes.
 
 \paragraph{Publishing.}
 When the user runs \texttt{hm publish file.hm}, the Lean process type-checks
-all declarations, serializes each to canonical binary form, and sends
-\texttt{Publish} messages containing the hash and serialized bytes.
+all declarations, then \emph{shatters} each declaration
+(Section~\ref{sec:subterm-hashing}): large subterms are replaced by $\hrefE$
+nodes and stored as separate entries.
+For each declaration, the process first publishes all subterm entries (each keyed
+by its content hash), then publishes the top-level declaration in the stored
+wire format (containing $\hrefE$ pointers instead of duplicated subterms).
 The sidecar stores each record locally (persisted to disk as a file keyed by
 the hex-encoded hash) and replicates to the DHT via Kademlia \texttt{PUT\_RECORD}.
 
 \paragraph{Fetching.}
 When the user runs \texttt{hm fetch <hash>}, the sidecar first checks its
 local file store, then queries the DHT via Kademlia \texttt{GET\_RECORD}.
-The Lean process deserializes the returned bytes, recomputes the SHA-256 hash
-to verify integrity, recursively fetches all dependencies (referenced hashes
-embedded in the term), type-checks each declaration, and adds it to the
-environment.
+The Lean process inspects the returned bytes for $\hrefE$ nodes (tag \texttt{0x19}),
+fetches each referenced subterm, builds a \textsf{SubtermStore}, and
+\emph{reassembles} the full declaration.
+It then recomputes the SHA-256 hash to verify integrity, recursively fetches all
+declaration-level dependencies (referenced hashes embedded in the term),
+type-checks each declaration, and adds it to the environment.
+The process is backward-compatible: declarations without $\hrefE$ nodes
+(published before subterm hash-consing was added) are handled identically
+to canonical-format records.
 This ensures that \emph{no ill-typed term can enter the environment through
 the network}---the sidecar is a transport layer only, and the Lean process
 independently verifies every declaration.
@@ -1658,6 +1808,10 @@ with libp2p Kademlia (Section~\ref{sec:prototype}).
 The CLI supports publishing, fetching with recursive dependency resolution,
 peer discovery, and manifest-based bulk sync.
 Persistent file-backed storage and NAT traversal support are included.
+Subterm-level hash-consing (Section~\ref{sec:subterm-hashing}) provides
+global deduplication: declarations are shattered into subterm fragments
+before publishing, enabling shared subterms across the entire network to be
+stored exactly once.
 
 \paragraph{Phase 3: Import Pipeline.}
 Build a Lean~4 export pipeline that translates \texttt{Expr} to HashMath terms, hashes them,

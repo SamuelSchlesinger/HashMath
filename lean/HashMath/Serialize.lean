@@ -25,6 +25,7 @@ namespace Tag
   def exprLetE    : UInt8 := 0x16
   def exprProj    : UInt8 := 0x17
   def exprIRef    : UInt8 := 0x18
+  def exprHRef    : UInt8 := 0x19
 
   -- Decl tags
   def declAxiom      : UInt8 := 0x20
@@ -78,6 +79,7 @@ def serializeExpr : Expr → ByteArray
   | .iref idx ls =>
     serByte Tag.exprIRef ++ serNat idx ++ serNat ls.length ++
     ByteArray.concatList (ls.map serializeLevel)
+  | .href a => nomatch a
 
 /-- Serialize a QuotKind to a single byte. -/
 def serializeQuotKind : QuotKind → UInt8
@@ -287,6 +289,7 @@ def Expr.constHashes : Expr → List Hash
   | .letE ty val body => ty.constHashes ++ val.constHashes ++ body.constHashes
   | .proj h _ s => h :: s.constHashes
   | .iref _ _ => []
+  | .href a => nomatch a
 
 /-- Collect all constant hashes referenced in a declaration. -/
 def Decl.constHashes : Decl → List Hash

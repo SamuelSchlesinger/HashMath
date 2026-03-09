@@ -3,6 +3,7 @@
 -/
 
 import HashMath.Elab
+import HashMath.Subterm
 import HashMath.Net.Client
 
 open HashMath
@@ -90,7 +91,12 @@ def findHmNet : IO String := do
     return "hm-net"
 
 /-- Recursively fetch a declaration and all its dependencies from the DHT.
-    Deserializes, verifies hash, typechecks, and adds to the environment. -/
+    Supports stored-format declarations with href subterm references:
+    1. Fetches the declaration bytes (may contain href tags)
+    2. Collects href hashes and fetches each subterm from the DHT
+    3. Reassembles the full declaration (resolving all hrefs)
+    4. Verifies hash, fetches const dependencies, typechecks, and adds to env
+    Backward-compatible: canonical-format bytes (no hrefs) also work. -/
 partial def fetchWithDeps (handle : SidecarHandle) (env : Environment) (hash : Hash)
     (visited : Std.HashMap Hash Bool := {}) : IO (Environment × Std.HashMap Hash Bool) := do
   -- Skip if already in the environment or already visited
@@ -99,19 +105,31 @@ partial def fetchWithDeps (handle : SidecarHandle) (env : Environment) (hash : H
   let visited := visited.insert hash true
   let resp ← handle.fetch hash
   match resp with
-  | .found _ declBytes => do
-    -- Deserialize
-    match deserializeDecl declBytes with
+  | .found _ storedBytes => do
+    -- Step 1: Collect href hashes from the stored-format bytes
+    let hrefHashes := collectStoredDeclHRefs storedBytes
+    -- Step 2: Fetch each subterm from the DHT
+    let mut store : SubtermStore := {}
+    for subHash in hrefHashes do
+      let subResp ← handle.fetch subHash
+      match subResp with
+      | .found _ subBytes =>
+        store := store.insert subHash subBytes
+      | .notFound _ =>
+        IO.eprintln s!"  WARNING: subterm not found: {hashToHex subHash}"
+      | _ => pure ()
+    -- Step 3: Reassemble the declaration (resolve all hrefs)
+    match reassembleStoredDecl storedBytes store with
     | none =>
-      IO.eprintln s!"  WARNING: failed to deserialize {hashToHex hash}"
+      IO.eprintln s!"  WARNING: failed to reassemble {hashToHex hash}"
       return (env, visited)
     | some decl => do
-      -- Verify hash: deserialize → hashDecl → compare
+      -- Verify hash: reassembled decl → hashDecl → compare
       let computedHash := hashDecl decl
       if computedHash != hash then
         IO.eprintln s!"  WARNING: hash mismatch for {hashToHex hash}, skipping"
         return (env, visited)
-      -- Recursively fetch dependencies first
+      -- Step 4: Recursively fetch const dependencies (other declarations)
       let deps := decl.constHashes
       let mut env' := env
       let mut vis := visited
@@ -122,7 +140,8 @@ partial def fetchWithDeps (handle : SidecarHandle) (env : Environment) (hash : H
       -- Typecheck and add to environment
       match checkDecl env' decl with
       | .ok (h, env'') =>
-        IO.println s!"  fetched & verified {hashToHex h}"
+        let subInfo := if hrefHashes.isEmpty then "" else s!" ({hrefHashes.length} subterms resolved)"
+        IO.println s!"  fetched & verified {hashToHex h}{subInfo}"
         return (env'', vis)
       | .error e =>
         IO.eprintln s!"  WARNING: typecheck failed for {hashToHex hash}: {e}"
@@ -136,23 +155,38 @@ partial def fetchWithDeps (handle : SidecarHandle) (env : Environment) (hash : H
   | _ =>
     return (env, visited)
 
-/-- Publish all declarations from a codebase to the DHT. -/
+/-- Publish all declarations from a codebase to the DHT.
+    Uses subterm hash-consing: large subexpressions are published separately
+    as content-addressed entries, and the declaration is stored in shattered
+    form with href references to the subterms. -/
 def publishCodebase (handle : SidecarHandle) (cb : Codebase) : IO Nat := do
   let mut count := 0
+  let mut subtermCount := 0
   for (name, hash) in cb.names.toList do
     match cb.env.lookup hash with
     | some di =>
-      let bytes := serializeDecl di.decl
-      let resp ← handle.publish hash bytes
+      -- Shatter the declaration: produces stored-format bytes + subterm store
+      let (storedBytes, store) := shatterDecl di.decl
+      -- Publish each subterm first
+      for (subHash, subBytes) in store.toList do
+        let resp ← handle.publish subHash subBytes
+        match resp with
+        | .published _ => subtermCount := subtermCount + 1
+        | _ => pure ()
+      -- Publish the stored-format declaration
+      let resp ← handle.publish hash storedBytes
       match resp with
       | .published _ =>
-        IO.println s!"  published {name} ({hashToHex hash})"
+        let storeInfo := if store.isEmpty then "" else s!" ({store.size} subterms)"
+        IO.println s!"  published {name} ({hashToHex hash}){storeInfo}"
         count := count + 1
       | .error msg =>
         IO.eprintln s!"  error publishing {name}: {msg}"
       | _ =>
         IO.eprintln s!"  unexpected response for {name}"
     | none => pure ()  -- skip derived entities (ctors, recs) that don't have direct decls
+  if subtermCount > 0 then
+    IO.println s!"  ({subtermCount} shared subterms published)"
   return count
 
 /-- Generate a manifest string from a codebase: one "name hexhash" per line. -/

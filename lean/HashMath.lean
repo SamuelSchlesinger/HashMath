@@ -16,4 +16,6 @@ import HashMath.Parser
 import HashMath.Elab
 import HashMath.Properties.SerializeInj
 import HashMath.Properties.HashInjectivity
+import HashMath.Subterm
 import HashMath.Tests
+import HashMath.SubtermTests

@@ -38,6 +38,7 @@ def hashExpr : Expr → Hash
   | .iref idx ls =>
     hashBytes (serByte Tag.exprIRef ++ serNat idx ++ serNat ls.length ++
       ByteArray.concatList (ls.map fun l => (hashLevel l).bytes))
+  | .href a => nomatch a
 
 /-- Hash an inductive type within a block. -/
 private def hashInductiveType (it : InductiveType) : Hash :=

@@ -59,11 +59,19 @@ key differences are:
    Merkle DAG where each hash transitively encodes the entire dependency tree
    down to the axioms.
 
-3. **Full transparency.** All definitions are always unfolded during type
+3. **Subterm-level hash-consing.** When declarations are stored or transmitted,
+   large subterms are replaced by hash references (`href` nodes), creating a
+   fine-grained Merkle DAG. Shared subterms across all declarations in the
+   network are stored exactly once, giving global deduplication — a `Nat → Nat`
+   that appears in a thousand types is stored once and referenced by hash
+   everywhere else. A phantom type parameter on `Expr` ensures that `href`
+   nodes can never reach the kernel type checker.
+
+4. **Full transparency.** All definitions are always unfolded during type
    checking — there is no opacity mechanism. This simplifies the kernel and
    ensures that definitional equality is purely structural.
 
-4. **Inductive types with derived entities.** Inductive type declarations (like
+5. **Inductive types with derived entities.** Inductive type declarations (like
    `Nat` or `List`) generate derived hashes for each constructor and recursor,
    all deterministically computed from the block hash.
 
@@ -76,7 +84,7 @@ The reference implementation is written in Lean 4 with no external dependencies
 |--------|---------|
 | `Basic` | 32-byte hash type, LEB128 encoding |
 | `Level` | Universe levels (zero, succ, max, imax, param) |
-| `Expr` | 9 expression constructors with de Bruijn indices |
+| `Expr` | 10 expression constructors with de Bruijn indices and phantom type parameter |
 | `Decl` | Declaration types (axiom, definition, inductive, quotient) |
 | `Serialize` | Binary serialization with domain-separating tags |
 | `SHA256` | Pure Lean SHA-256 (FIPS 180-4), verified against NIST test vectors |
@@ -87,9 +95,11 @@ The reference implementation is written in Lean 4 with no external dependencies
 | `Inductive` | Positivity checking, universe constraints, recursor generation |
 | `DefEq` | Mutual type inference, definitional equality, subtype checking, structural eta |
 | `TypeChecker` | Top-level declaration checking |
+| `Subterm` | Subterm-level hash-consing: shatter, reassemble, stored expression serialization |
 | `Net/IPC` | Binary IPC protocol for Lean-to-Rust communication |
 | `Net/Client` | Sidecar process management and high-level DHT operations |
 | `Tests` | 30 test groups covering all features |
+| `SubtermTests` | Subterm round-trip, fuzz, deduplication, and P2P simulation tests |
 
 ## Distributed hash table
 
@@ -102,6 +112,13 @@ length-prefixed binary protocol.
 - **Fetch** declarations (with recursive dependency resolution) with `hm fetch <hash>`
 - **Discover peers** with `hm peers`
 - **Bulk sync** entire libraries with `.hmm` manifest files
+
+When publishing, declarations are *shattered* into subterm fragments: large
+subterms are replaced by `href` hash references and published as separate DHT
+entries. When fetching, the process reverses — subterm entries are fetched,
+the full expression is reassembled, and then the hash is verified and the
+declaration is type-checked. This is transparent to the user and backward-
+compatible with non-shattered records.
 
 Records are persisted to disk so nodes retain data across restarts. See
 [MANUAL.md](MANUAL.md) for full usage instructions.

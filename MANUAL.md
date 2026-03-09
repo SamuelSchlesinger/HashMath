@@ -113,8 +113,16 @@ Publish all declarations from one or more `.hm` files to the DHT:
 hm publish basics.hm logic.hm
 ```
 
-This type-checks each file, serializes every declaration, and publishes them
-to both the local store and the DHT network.
+This type-checks each file, then for each declaration:
+1. **Shatters** the declaration into subterm fragments — large subterms
+   (>33 bytes serialized) are replaced by hash references (`href` nodes)
+   and stored as separate DHT entries.
+2. **Publishes** each subterm entry to the DHT.
+3. **Publishes** the top-level declaration (now containing `href` pointers
+   instead of repeated subterms) to the DHT.
+
+The result is global subterm deduplication: shared subterms across all
+declarations in the network are stored exactly once.
 
 ### Fetching declarations
 
@@ -124,8 +132,11 @@ Fetch a declaration by its 64-character hex hash:
 hm fetch 5a1fc2...deadbeef
 ```
 
-This recursively resolves all dependencies, downloads them from the DHT,
-verifies each hash, type-checks each declaration, and reports the results.
+This recursively resolves all dependencies (including subterm fragments
+referenced by `href` nodes), downloads them from the DHT, reassembles
+full expressions, verifies each hash, type-checks each declaration, and
+reports the results. The format is backward-compatible: declarations
+published before subterm hash-consing was added are fetched correctly.
 
 ### Checking peers
 
