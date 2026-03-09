@@ -2,7 +2,11 @@
 
 **A content-addressed Calculus of Inductive Constructions for permissionless formal mathematics.**
 
-> **Note:** This project is a work in progress and under active construction. The design and implementation may change significantly.
+> **Status: Proof of Concept.** This project is a proposal accompanied by a
+> proof-of-concept implementation. The CIC variant used here has not been
+> formally validated and may be unsound. It should not be relied upon for
+> correctness-critical applications. The design and implementation may change
+> significantly.
 
 ## What is this?
 
@@ -20,7 +24,7 @@ Dependencies between results are tracked by hash, not by name.
 
 The result is a global, append-only knowledge base where:
 
-- **Correctness is guaranteed** — every entry is mechanically type-checked before it's accepted, and after it's retrieved.
+- **Correctness by construction** — every entry is mechanically type-checked before it's accepted, and after it's retrieved (assuming a sound type checker; see caveats below).
 - **Names are optional** — they're useful metadata, not identity.
 - **No coordination is required** — anyone (human or AI) can contribute, and duplicates are free.
 - **Discovery is by type** — you can search for all proofs of a given statement by its type signature.
@@ -104,16 +108,23 @@ Records are persisted to disk so nodes retain data across restarts. See
 
 ## The trust model
 
-The system's correctness rests on a small trusted computing base:
+In a mature implementation, the system's correctness would rest on a small
+trusted computing base:
 
 1. The CIC type checker is correct.
 2. The SHA-256 implementation is correct.
 3. The serialization format faithfully represents terms.
 
-Everything above the kernel — elaboration, name registries, search, UI — is
-untrusted. A buggy pretty printer can't make an ill-typed term appear valid. A
-malicious name registry can't alter what a hash points to. The cryptographic
+Everything above the kernel — elaboration, name registries, search, UI — would
+be untrusted. A buggy pretty printer can't make an ill-typed term appear valid.
+A malicious name registry can't alter what a hash points to. The cryptographic
 hash pins the content.
+
+**Caveat:** This implementation is a proof of concept. The type checker has not
+been independently audited or formally verified, and past iterations have
+contained soundness bugs (see commit history). Until the kernel is validated
+against an established CIC specification, treat it as an illustration of the
+proposed architecture rather than a trustworthy foundation.
 
 ## Further reading
 
