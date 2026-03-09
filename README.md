@@ -83,7 +83,24 @@ The reference implementation is written in Lean 4 with no external dependencies
 | `Inductive` | Positivity checking, universe constraints, recursor generation |
 | `DefEq` | Mutual type inference, definitional equality, subtype checking, structural eta |
 | `TypeChecker` | Top-level declaration checking |
+| `Net/IPC` | Binary IPC protocol for Lean-to-Rust communication |
+| `Net/Client` | Sidecar process management and high-level DHT operations |
 | `Tests` | 30 test groups covering all features |
+
+## Distributed hash table
+
+HashMath includes a peer-to-peer distribution layer built on a Rust sidecar
+(`hm-net/`) that runs a [libp2p](https://libp2p.io/) Kademlia DHT. The Lean
+`hm` process communicates with the sidecar via stdin/stdout IPC using a
+length-prefixed binary protocol.
+
+- **Publish** declarations to the DHT with `hm publish <file.hm>`
+- **Fetch** declarations (with recursive dependency resolution) with `hm fetch <hash>`
+- **Discover peers** with `hm peers`
+- **Bulk sync** entire libraries with `.hmm` manifest files
+
+Records are persisted to disk so nodes retain data across restarts. See
+[MANUAL.md](MANUAL.md) for full usage instructions.
 
 ## The trust model
 

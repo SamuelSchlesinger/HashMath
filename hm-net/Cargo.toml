@@ -1,0 +1,22 @@
+[package]
+name = "hm-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+libp2p = { version = "0.54", features = [
+  "tokio",
+  "noise",
+  "tcp",
+  "yamux",
+  "kad",
+  "identify",
+  "autonat",
+  "relay",
+  "macros",
+] }
+dirs = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

@@ -1,6 +1,9 @@
 # Lake build artifacts
 .lake/
 
+# Rust build artifacts
+hm-net/target/
+
 # LaTeX build artifacts
 *.aux
 *.log

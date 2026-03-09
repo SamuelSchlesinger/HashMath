@@ -1560,33 +1560,118 @@ provides a natural interface for AI proof search: search by type signature rathe
 
 
 %% ============================================================
+\section{Reference Implementation: Distribution Prototype}
+\label{sec:prototype}
+
+The reference implementation includes a working peer-to-peer distribution layer
+built as a Rust sidecar process (\texttt{hm-net}) communicating with the Lean
+\texttt{hm} CLI.
+This section describes the architecture and protocol of this prototype,
+which realizes the distribution model described in Section~\ref{sec:distribution}.
+
+\subsection{Architecture}
+
+The system follows a two-process architecture:
+\begin{itemize}[nosep]
+  \item \textbf{Lean process (\texttt{hm})}: handles parsing, elaboration,
+    type checking, hashing, and serialization.
+    All trust-critical operations remain in Lean.
+  \item \textbf{Rust sidecar (\texttt{hm-net})}: runs a libp2p~\cite{libp2p}
+    Kademlia DHT~\cite{maymounkov2002kademlia} node for peer-to-peer
+    storage and retrieval of content-addressed records.
+    The sidecar is entirely untrusted---it transports opaque bytes
+    whose integrity is verified by the Lean process upon retrieval.
+\end{itemize}
+
+The Lean process spawns \texttt{hm-net} as a child process and communicates
+over stdin/stdout using a binary IPC protocol.
+The sidecar's libp2p stack includes Kademlia for record storage, the Identify
+protocol for peer discovery, AutoNAT for NAT status detection, and a Relay
+client for NAT traversal.
+
+\subsection{IPC Protocol}
+
+Communication uses length-prefixed binary frames:
+\[
+  \underbrace{4\text{-byte BE length}}_{L} \;\|\; \underbrace{\text{tag byte}}_{1} \;\|\; \underbrace{\text{payload}}_{L - 1}
+\]
+
+Five request types flow from Lean to Rust (tags \texttt{0x50}--\texttt{0x54}:
+Ping, Publish, Fetch, GetPeers, Shutdown) and six response types flow back
+(tags \texttt{0x60}--\texttt{0x65}: Pong, Published, Found, NotFound, PeerList, Error).
+Hash values are transmitted as raw 32-byte SHA-256 digests;
+variable-length fields use LEB128 length prefixes.
+
+\subsection{Publish and Fetch}
+
+\paragraph{Publishing.}
+When the user runs \texttt{hm publish file.hm}, the Lean process type-checks
+all declarations, serializes each to canonical binary form, and sends
+\texttt{Publish} messages containing the hash and serialized bytes.
+The sidecar stores each record locally (persisted to disk as a file keyed by
+the hex-encoded hash) and replicates to the DHT via Kademlia \texttt{PUT\_RECORD}.
+
+\paragraph{Fetching.}
+When the user runs \texttt{hm fetch <hash>}, the sidecar first checks its
+local file store, then queries the DHT via Kademlia \texttt{GET\_RECORD}.
+The Lean process deserializes the returned bytes, recomputes the SHA-256 hash
+to verify integrity, recursively fetches all dependencies (referenced hashes
+embedded in the term), type-checks each declaration, and adds it to the
+environment.
+This ensures that \emph{no ill-typed term can enter the environment through
+the network}---the sidecar is a transport layer only, and the Lean process
+independently verifies every declaration.
+
+\subsection{Persistent Storage}
+
+The sidecar maintains a file-backed record store at a platform-specific
+data directory.
+Each Kademlia record is stored as a file named by the hex-encoded key under a
+\texttt{records/} subdirectory.
+An Ed25519 keypair is persisted at \texttt{keypair}, giving the node a stable
+PeerId across restarts.
+
+\subsection{Manifest-Based Bulk Sync}
+
+For synchronizing entire libraries, HashMath supports \emph{manifest files}
+(\texttt{.hmm}): plain-text files listing one \texttt{name hexhash} pair per line.
+The \texttt{hm manifest --generate} command produces a manifest from source files,
+and \texttt{hm fetch --manifest lib.hmm} fetches and verifies every entry.
+This enables efficient bulk replication of curated libraries across nodes.
+
+%% ============================================================
 \section{Roadmap}
 \label{sec:roadmap}
 
-We outline a phased development plan.
+We outline a phased development plan, noting progress to date.
 
-\paragraph{Phase 1: Core Infrastructure.}
-Implement the CIC type checker---following Diehl~\cite{diehl200lines}, the core can be realized in
-hundreds of lines---the hash function, the hashset with type index, and a canonical binary
-serialization format.
+\paragraph{Phase 1: Core Infrastructure \textnormal{(complete)}.}
+The CIC type checker, SHA-256 hash function, canonical binary serialization,
+and content-addressed environment are implemented in Lean~4 with no external
+dependencies.
+The implementation includes 47 automated tests covering type checking,
+positivity, universe constraints, and error rejection.
 
-\paragraph{Phase 2: Import Pipeline.}
+\paragraph{Phase 2: Distribution Prototype \textnormal{(complete)}.}
+A working peer-to-peer distribution layer is implemented using a Rust sidecar
+with libp2p Kademlia (Section~\ref{sec:prototype}).
+The CLI supports publishing, fetching with recursive dependency resolution,
+peer discovery, and manifest-based bulk sync.
+Persistent file-backed storage and NAT traversal support are included.
+
+\paragraph{Phase 3: Import Pipeline.}
 Build a Lean~4 export pipeline that translates \texttt{Expr} to HashMath terms, hashes them,
 and populates the hashset.
 Import Mathlib as the initial corpus (210,000+ theorems).
 Build a Rocq export pipeline for the standard library.
 
-\paragraph{Phase 3: AI Integration.}
+\paragraph{Phase 4: AI Integration.}
 Provide an API for AI agents to submit verified terms and query the type index.
 Build a type-directed search interface.
 Integrate with existing AI proving systems (DeepSeek-Prover, LeanDojo, etc.).
 
-\paragraph{Phase 4: Distribution and Scaling.}
-Implement peer-to-peer replication of the hashset.
-Optimize incremental syncing (transfer only missing hashes).
-Optimize query performance for the type index at scale.
-
-\paragraph{Phase 5: Ecosystem.}
+\paragraph{Phase 5: Scaling and Ecosystem.}
+Implement connection limits, rate limiting, and spam resistance.
 Build IDE integration (VS Code, Emacs) for browsing and searching the hashset.
 Build a web interface for exploration.
 Support community-maintained name maps.
@@ -1891,6 +1976,16 @@ S.~Nakamoto,
 P.~Graf,
 ``Term Indexing,''
 \emph{Lecture Notes in Computer Science}, vol.~1053, Springer, 1996.
+
+\bibitem{libp2p}
+Protocol Labs,
+``libp2p: A modular network stack,''
+\url{https://libp2p.io/}, 2024.
+
+\bibitem{maymounkov2002kademlia}
+P.~Maymounkov and D.~Mazi\`eres,
+``Kademlia: A peer-to-peer information system based on the XOR metric,''
+in \emph{Proc.\ IPTPS}, LNCS~2429, Springer, 2002, pp.~53--65.
 
 \end{thebibliography}
 
