@@ -23,8 +23,8 @@ def projReduce (env : Environment) (typeName : Hash) (idx : Nat) (struct : Expr)
   let (fn, args) := struct.getAppFnArgs
   match fn with
   | .const _h _ =>
-    match env.getInductiveBlock typeName with
-    | some block =>
+    match env.getInductiveBlockForType typeName with
+    | some (block, _) =>
       match block.types with
       | [indTy] =>
         match indTy.ctors with

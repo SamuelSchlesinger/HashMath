@@ -437,6 +437,7 @@ where
 def checkInductiveBlock (env : Environment) (block : InductiveBlock) : Except String Unit := do
   -- Use type indices for positivity checking (pre-resolution, using iref)
   let indIndices := List.range block.types.length
+  let mut typeIdx := 0
   for indTy in block.types do
     -- Check type former ends in Sort
     if !endsInSort indTy.type then
@@ -449,10 +450,13 @@ def checkInductiveBlock (env : Environment) (block : InductiveBlock) : Except St
       -- Check iref indices are in range
       if hasInvalidIRef ctorTy block.types.length then
         throw "checkInductiveBlock: iref index out of range"
-      -- Check constructor returns an inductive type from this block
+      -- Check constructor returns its own inductive type (not another type in the block)
       match (getResultType ctorTy).getAppFn with
-      | .iref _ _ => pure ()
+      | .iref idx _ =>
+        if idx != typeIdx then
+          throw s!"checkInductiveBlock: constructor returns wrong type (iref {idx}, expected {typeIdx})"
       | _ => throw "checkInductiveBlock: constructor must return its inductive type"
+    typeIdx := typeIdx + 1
   return ()
 where
   endsInSort : Expr → Bool

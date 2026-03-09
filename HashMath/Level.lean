@@ -80,11 +80,48 @@ def normalize : Level → Level
     | l₂' => .imax (normalize l₁) l₂'
   | .param n => .param n
 
-/-- Check `l₁ ≤ l₂` for closed ground levels. -/
-def leq (l₁ l₂ : Level) : Option Bool := do
-  let n₁ ← l₁.normalize.toNat
-  let n₂ ← l₂.normalize.toNat
-  return n₁ ≤ n₂
+/-- Check `l₁ ≤ l₂` for universe levels, including symbolic params.
+    Returns `some true` if provably ≤, `some false` if provably >,
+    `none` if indeterminate. Handles:
+    - `zero ≤ x` (always true)
+    - `succ a ≤ succ b` iff `a ≤ b`
+    - `a ≤ succ b` if `a ≤ b` (monotonicity)
+    - `a ≤ max b₁ b₂` if `a ≤ b₁` or `a ≤ b₂`
+    - `max a₁ a₂ ≤ b` if `a₁ ≤ b` and `a₂ ≤ b` -/
+partial def leq (l₁ l₂ : Level) : Option Bool :=
+  leqCore l₁.normalize l₂.normalize
+where
+  leqCore (a b : Level) : Option Bool :=
+    if a == b then some true
+    else match a with
+    | .zero => some true
+    | .max a₁ a₂ =>
+      -- max a₁ a₂ ≤ b iff a₁ ≤ b and a₂ ≤ b
+      match leqCore a₁ b, leqCore a₂ b with
+      | some true, some true => some true
+      | some false, _ => some false
+      | _, some false => some false
+      | _, _ => none
+    | _ =>  -- a is succ, param, or imax
+      match b with
+      | .succ b' =>
+        -- a ≤ b' implies a ≤ succ b'  (monotonicity)
+        match leqCore a b' with
+        | some true => some true
+        | _ =>
+          -- succ a' ≤ succ b' iff a' ≤ b'
+          match a with
+          | .succ a' => leqCore a' b'
+          | _ => none
+      | .max b₁ b₂ =>
+        -- a ≤ max b₁ b₂ if a ≤ b₁ or a ≤ b₂
+        match leqCore a b₁ with
+        | some true => some true
+        | _ => leqCore a b₂
+      | _ =>
+        match a.toNat, b.toNat with
+        | some n₁, some n₂ => some (n₁ ≤ n₂)
+        | _, _ => none
 
 /-- Structural equality of levels (syntactic, after normalization). -/
 def beqNorm (l₁ l₂ : Level) : Bool :=

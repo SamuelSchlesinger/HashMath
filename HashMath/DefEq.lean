@@ -55,7 +55,11 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
     | some ty => .ok (ty.liftN (i + 1))
     | none => .error s!"inferType: bound variable index {i} out of range (context size {ctx.length})"
   | .sort l => .ok (.sort (.succ l))
-  | .const h univs =>
+  | .const h univs => do
+    -- Validate universe parameter count
+    if let some expected := env.getExpectedUnivParams h then
+      if univs.length != expected then
+        throw s!"inferType: constant has {univs.length} universe arguments but expected {expected}"
     -- Check regular declarations (axioms, definitions)
     match env.getDeclType h univs with
     | some ty => .ok ty
@@ -127,8 +131,8 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
       .ok (bodyTy.instantiate val)
   | .proj typeName idx struct => do
     let _structTy ← inferType env ctx struct
-    match env.getInductiveBlock typeName with
-    | some block =>
+    match env.getInductiveBlockForType typeName with
+    | some (block, _) =>
       match block.types with
       | [indTy] =>
         match indTy.ctors with

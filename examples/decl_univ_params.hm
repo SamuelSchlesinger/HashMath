@@ -5,6 +5,6 @@ def id.{u} : Sort u → Sort u := fun (A : Sort u) => A
 -- Also test axiom with .{u}
 axiom transport.{u} : ∀ (A : Sort u) (B : Sort u), A → B
 
--- Verify they work
-#check id
-#check transport
+-- Verify they work (must supply universe args)
+#check id.{1}
+#check transport.{1}

@@ -1,0 +1,11 @@
+-- Constructor returns wrong type in mutual block
+-- A constructor for Even secretly returns Odd (should be rejected)
+
+mutual
+  .{}
+  inductive Even : Type where
+    | zero : Even
+    | succ_odd : Odd → Even
+  inductive Odd : Type where
+    | succ_even : Even → Even
+end

@@ -166,6 +166,33 @@ def getInductiveBlock (env : Environment) (h : Hash) : Option InductiveBlock :=
     | _ => none
   | none => none
 
+/-- Get the expected number of universe parameters for a constant hash,
+    checking all entity types (declarations, inductive types, constructors, recursors). -/
+def getExpectedUnivParams (env : Environment) (h : Hash) : Option Nat :=
+  -- Regular declarations (axioms, definitions, inductive blocks, quotients)
+  match env.lookup h with
+  | some info => some info.decl.numUnivParams
+  | none =>
+    -- Inductive types (by derived type hash)
+    match env.getInductiveBlockForType h with
+    | some (block, _) => some block.numUnivParams
+    | none =>
+      -- Constructors
+      match env.getConstructorInfo h with
+      | some ctorInfo =>
+        match env.getInductiveBlockForType ctorInfo.indHash with
+        | some (block, _) => some block.numUnivParams
+        | none => none
+      | none =>
+        -- Recursors (block params + 1 if large elimination allowed)
+        match env.getRecursorInfo h with
+        | some recInfo =>
+          match env.getInductiveBlockForType recInfo.indHash with
+          | some (block, _) =>
+            some (block.numUnivParams + if recInfo.allowsLargeElim then 1 else 0)
+          | none => none
+        | none => none
+
 end Environment
 
 end HashMath

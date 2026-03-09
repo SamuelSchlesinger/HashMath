@@ -8,13 +8,13 @@ inductive List (A : Type) : Type where
   | nil : List A
   | cons : A → List A → List A
 
--- Length function via List.rec.{1, 1}
--- List.rec has 2 universe params: u (for A : Sort u) and u_motive
--- List.rec.{1, 1} : (A : Type) → (motive : List A → Type) → motive (List.nil A) →
+-- Length function via List.rec.{1}
+-- List has 0 universe params (monomorphic), but large elim adds 1 for the motive
+-- List.rec.{1} : (A : Type) → (motive : List A → Type) → motive (List.nil A) →
 --   (∀ (a : A) (as : List A), motive as → motive (List.cons A a as)) → (l : List A) → motive l
 def length : ∀ (A : Type), List A → Nat :=
   fun (A : Type) =>
-    List.rec.{1, 1} A
+    List.rec.{1} A
       (fun (_ : List A) => Nat)
       Nat.zero
       (fun (_ : A) (_ : List A) (ih : Nat) => Nat.succ ih)
@@ -26,7 +26,7 @@ def length : ∀ (A : Type), List A → Nat :=
 -- Map function
 def map : ∀ (A : Type) (B : Type), (A → B) → List A → List B :=
   fun (A : Type) (B : Type) (f : A → B) =>
-    List.rec.{1, 1} A
+    List.rec.{1} A
       (fun (_ : List A) => List B)
       (List.nil B)
       (fun (a : A) (_ : List A) (ih : List B) => List.cons B (f a) ih)

@@ -1,0 +1,12 @@
+-- Wrong number of universe arguments (should be rejected)
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- Nat.rec has 1 universe param (for motive), but we pass 2
+def bad : Nat → Nat :=
+  Nat.rec.{1, 1}
+    (fun (_ : Nat) => Nat)
+    Nat.zero
+    (fun (_ : Nat) (ih : Nat) => ih)

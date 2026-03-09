@@ -7,17 +7,17 @@ inductive PropOr (P : Prop) (Q : Prop) : Prop where
 
 -- The recursor should have motive targeting Prop (Sort 0), not Type
 #check PropOr
-#check PropOr.rec
+#check PropOr.rec  -- no large elim → 0 univ params
 
 -- Prop with 1 constructor: large elimination allowed
 inductive PropAnd (P : Prop) (Q : Prop) : Prop where
   | intro : P → Q → PropAnd P Q
 
 #check PropAnd
-#check PropAnd.rec
+#check PropAnd.rec.{0}  -- large elim → 1 univ param (motive universe)
 
 -- Prop with 0 constructors: large elimination allowed
 inductive PropFalse : Prop where
 
 #check PropFalse
-#check PropFalse.rec
+#check PropFalse.rec.{0}  -- large elim → 1 univ param

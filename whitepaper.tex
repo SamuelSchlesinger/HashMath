@@ -80,7 +80,7 @@ A type-to-inhabitants index enables type-directed search across the entire knowl
 allowing AI agents and human mathematicians to discover relevant lemmas by their type
 signatures alone.
 HashMath provides the infrastructure for Tao's vision of collaborative human-AI mathematics
-at scale: 1000 agents and 100 mathematicians contributing simultaneously, building on each
+at scale: many agents and mathematicians contributing simultaneously, building on each
 other's work by hash, without a single naming conflict.
 \end{abstract}
 
@@ -144,9 +144,23 @@ The result is a global, append-only knowledge base that requires no coordination
 no curator to maintain, and no naming consensus to function.
 
 \begin{quote}
-\emph{Bitcoin solved double-spending without trusted third parties~\cite{nakamoto2008}.
-HashMath solves naming conflicts without trusted curators.}
+\emph{Inspired by Bitcoin's insight that trust can emerge from verification rather than
+authority~\cite{nakamoto2008}, HashMath applies content-addressing to formal mathematics:
+naming conflicts are resolved without trusted curators.}
 \end{quote}
+
+\paragraph{Paper outline.}
+Section~\ref{sec:cic} specifies the HashMath CIC dialect---term constructors, typing rules,
+and reductions.
+Section~\ref{sec:content} defines the content-addressing scheme and hash functions.
+Section~\ref{sec:trust} analyzes verification and trust properties.
+Section~\ref{sec:architecture} describes the knowledge base architecture, including the
+type-to-inhabitants index and interoperability with existing proof assistants.
+Section~\ref{sec:collaboration} discusses AI and human collaboration at scale.
+Section~\ref{sec:challenges} addresses challenges and limitations.
+Section~\ref{sec:related} surveys related work.
+Section~\ref{sec:roadmap} presents a phased development roadmap, and
+Section~\ref{sec:indices} outlines future work on advanced indices.
 
 \begin{figure}[t]
 \centering
@@ -198,8 +212,10 @@ content-addressed setting.
 \label{sec:terms}
 
 Lean~4's kernel defines \texttt{Expr} with 12 constructors.
-HashMath retains the 9 constructors that carry type-theoretic content and excludes the
+HashMath retains 8 of these (those that carry type-theoretic content) and excludes the
 4 that serve only elaboration, metaprogramming, or syntactic sugar.
+One new constructor, $\textsf{iref}$, is added for block-relative references in mutual
+inductive definitions, for 9 constructors total.
 
 \begin{definition}[HashMath expression grammar]
 \label{def:expr}
@@ -277,8 +293,9 @@ The four excluded constructors are:
 \hline
 \end{tabular}
 \caption{Lean~4 \texttt{Expr} constructors and their status in HashMath.
-  Of the 12 constructors, 8 are retained (type-theoretic content) and 4 are
-  excluded (elaboration or syntactic sugar).}
+  Of the 12 Lean constructors, 8 are retained and 4 are
+  excluded (elaboration or syntactic sugar). One new constructor (\texttt{iref}) is added,
+  for 9 total.}
 \label{tab:constructors}
 \end{table}
 
@@ -525,7 +542,10 @@ An inductive block is a record:
     \mathit{isUnsafe} : \textsf{Bool}
   \}
 \]
-where $k$ is the number of universe parameters, $p$ is the number of parameters, and each
+where $k$ is the number of universe parameters, $p$ is the number of parameters,
+$\mathit{isUnsafe}$ marks the block as unsafe (bypassing the kernel's soundness checks,
+used in Lean~4 for implementation-internal types that are not intended to appear in proofs),
+and each
 $\textsf{InductiveType}$ is:
 \[
   \textsf{InductiveType} \;=\; \{
@@ -1107,7 +1127,8 @@ framework (the $\lambda\Pi$-calculus modulo theory).
 The EuroProofNet COST action~\cite{europroofnet} (2022--2025, 600+ researchers, 47 countries)
 has advanced this vision.
 HashMath bypasses the translation problem by working at the CIC kernel level where Lean and
-Rocq already agree.
+Rocq agree on the core theory, though they diverge on several kernel-level details
+(Section~\ref{sec:divergences}).
 The approaches are complementary: Dedukti could translate non-CIC proofs (e.g., from
 Isabelle/HOL) into CIC for HashMath storage.
 
@@ -1280,7 +1301,7 @@ Humans add curation---names, organization, exposition---as an optional layer.}
 \section{Challenges and Limitations}
 \label{sec:challenges}
 
-We address the principal challenges honestly.
+We address the principal challenges.
 
 \subsection{Definitional Equality and Hash Diversity}
 \label{sec:hash-diversity}
@@ -1331,8 +1352,9 @@ The Unison project experienced this challenge in migrating between hash format v
 
 We mitigate this through several mechanisms:
 \begin{itemize}[nosep]
-  \item \textbf{Version prefix}: every hash includes a format version byte, so terms self-identify
-    their hashing era.
+  \item \textbf{Version prefix}: a future version of the format could prepend a version byte to
+    every hash input, so that terms self-identify their hashing era.
+    (The current tag bytes in Section~\ref{sec:hashing} are constructor tags, not version identifiers.)
   \item \textbf{Bidirectional mappings}: during transitions, maintain a mapping between old and new hashes.
   \item \textbf{Stability as a goal}: the hash format should be designed carefully and changed rarely.
     Getting it right early is a priority.
@@ -1494,24 +1516,17 @@ read from and write to, without modifying the system itself.
 
 \subsection{Unison}
 
-Unison~\cite{unison} is the closest precedent.
-It content-addresses general-purpose functional programs using SHA3 hashes of abstract syntax trees.
-HashMath uses SHA-256 instead of SHA3 but the content-addressing architecture is analogous.
-HashMath adapts this idea for the Calculus of Inductive Constructions, adding the type-to-inhabitants
-index, requiring formal verification before storage, and handling CIC-specific features
-(universe polymorphism, inductive types, strict positivity).
+Unison~\cite{unison} is the closest precedent: it content-addresses general-purpose functional
+programs using cryptographic hashes of abstract syntax trees.
+Section~\ref{sec:unison} discusses the detailed comparison; the key differences are that
+HashMath adds a type-to-inhabitants index, requires formal verification before storage,
+and handles CIC-specific features (universe polymorphism, inductive types, strict positivity).
 
 \subsection{Logipedia and Dedukti}
 
-The Logipedia project~\cite{logipedia} aims to build a universal library of formal proofs by
-translating between systems through the Dedukti logical framework~\cite{dedukti}, based on
-the $\lambda\Pi$-calculus modulo theory.
-The EuroProofNet COST action~\cite{europroofnet} (2022--2025) has advanced this vision with
-over 600 researchers across 47 countries.
-Dedukti translates between \emph{different type theories} through a common framework;
-HashMath works at the CIC kernel level where Lean and Rocq \emph{already agree}.
-The approaches are complementary: Dedukti could translate non-CIC proofs into CIC for
-HashMath storage.
+The Logipedia project~\cite{logipedia} and Dedukti~\cite{dedukti} translate proofs between
+different type theories through the $\lambda\Pi$-calculus modulo theory.
+HashMath takes a complementary approach, as discussed in Section~\ref{sec:interop}.
 
 \subsection{MetaCoq}
 
