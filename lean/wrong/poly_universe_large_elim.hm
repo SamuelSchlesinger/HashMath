@@ -1,0 +1,21 @@
+-- SOUNDNESS: Polymorphic universe allows large elimination when instantiated to Prop.
+-- MyBool.{u} : Sort u with 2 constructors gets large elim unconditionally.
+-- When u=0, it's Prop with 2 ctors — should NOT get large elim.
+-- Fix: polymorphic target sorts conservatively apply Prop rules.
+-- After fix, MyBool.rec has 1 universe param (just u, no motive universe).
+
+inductive MyBool.{u} : Sort u where
+  | ff : MyBool.{u}
+  | tt : MyBool.{u}
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+-- This should fail: MyBool.rec expects 1 universe arg (u only, large elim blocked),
+-- but we're trying to use it with 2 (u=1, motive=Type) for large elimination.
+def discrim : MyBool.{1} → Nat :=
+  MyBool.rec.{1, 1}
+    (fun (_ : MyBool.{1}) => Nat)
+    Nat.zero
+    (Nat.succ Nat.zero)

@@ -1,0 +1,26 @@
+-- SOUNDNESS: All-Prop mutual block where per-type large elim allows extraction.
+-- A : Prop (single Prop field, syntactically gets large elim)
+-- B : Prop (Nat field, blocks large elim)
+-- Bug: A.rec's motive for B inherits A's large elim universe.
+-- Fix: mutual block large elim is conjunction of all types.
+-- After fix, A.rec has 0 extra universe params (blocked large elim).
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+mutual
+  inductive A : Prop where
+    | mk : B → A
+  inductive B : Prop where
+    | mk : Nat → B
+end
+
+-- This should fail: A.rec should have 0 universe args (large elim blocked),
+-- but we're trying to use it with 1 (attempting large elimination into Type).
+def extractNat : A → Nat :=
+  A.rec.{1}
+    (fun (_ : A) => Nat)
+    (fun (_ : B) => Nat)
+    (fun (_ : B) (ih : Nat) => ih)
+    (fun (n : Nat) => n)

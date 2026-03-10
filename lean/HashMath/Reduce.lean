@@ -22,17 +22,19 @@ def zetaReduce (val : Expr) (body : Expr) : Expr :=
 def projReduce (env : Environment) (typeName : Hash) (idx : Nat) (struct : Expr) : Option Expr :=
   let (fn, args) := struct.getAppFnArgs
   match fn with
-  | .const _h _ =>
+  | .const ctorH _ =>
     match env.getInductiveBlockForType typeName with
     | some (block, _) =>
-      match block.types with
-      | [indTy] =>
-        match indTy.ctors with
-        | [_ctorTy] =>
-          let fieldIdx := block.numParams + idx
-          args[fieldIdx]?
-        | _ => none
-      | _ => none
+      match env.getConstructorInfo ctorH with
+      | some ctorInfo =>
+        if ctorInfo.indHash != typeName then none
+        else
+          match block.types with
+          | [_] =>
+            let fieldIdx := block.numParams + idx
+            args[fieldIdx]?
+          | _ => none
+      | none => none
     | none => none
   | _ => none
 
@@ -56,8 +58,7 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
       let major := args[majorIdx]!
       let major' := whnfFn env major
       let (majorFn, majorArgs) := major'.getAppFnArgs
-      match majorFn with
-      | .const ctorH _ =>
+      let processCtorApp := fun (ctorH : Hash) (majorArgs : List Expr) =>
         match env.getConstructorInfo ctorH with
         | some ctorInfo =>
           if ctorInfo.indHash != recInfo.indHash then none
@@ -66,40 +67,93 @@ def iotaReduce (env : Environment) (recHash : Hash) (univs : List Level)
             if minorIdx >= args.length then none
             else
               let minor := args[minorIdx]!
-              -- The fields are the constructor args after params
               let fields := majorArgs.drop ctorInfo.nParams
-              -- Build minor args: interleave fields with IH for recursive fields
               let recPrefix := args.take nParams ++
                 (args.drop nParams).take nMotives ++
                 (args.drop (nParams + nMotives)).take nMinors
               let minorArgs := buildMinorArgs fields 0 ctorInfo.recursiveFields
                   recInfo.blockHash univs recPrefix majorArgs ctorInfo.nParams []
               let result := Expr.mkAppN minor minorArgs
-              -- Also apply any remaining args beyond the recursor's expected args
               let extraArgs := args.drop expectedArgs
               some (Expr.mkAppN result extraArgs)
         | none => none
-      | _ => none
+      -- Try direct constructor match first
+      let ctorResult := match majorFn with
+        | .const ctorH _ => processCtorApp ctorH majorArgs
+        | _ => none
+      match ctorResult with
+      | some r => some r
+      | none =>
+        -- Try K-like synthesis or struct eta expansion
+        match env.getInductiveBlockForType recInfo.indHash with
+        | some (block, blkIdx) =>
+          match block.types with
+          | [indTy] =>
+            match indTy.ctors with
+            | [ctorTy] =>
+              let nFields := countForallE ctorTy - block.numParams
+              if nFields == 0 then
+                -- K-like: single type, single ctor, zero fields
+                -- Check if definitively Prop (Sort 0)
+                match getTargetSort indTy.type with
+                | some l =>
+                  match l.normalize.toNat with
+                  | some 0 =>
+                    -- Synthesize the unique constructor: ctor params
+                    let ctorHash := hashCtor recInfo.blockHash blkIdx 0
+                    let params := args.take nParams
+                    processCtorApp ctorHash params
+                  | _ => none
+                | none => none
+              else
+                -- Structure eta: expand major into ctor(params, proj 0 major, ...)
+                let ctorHash := hashCtor recInfo.blockHash blkIdx 0
+                let params := args.take nParams
+                let projections := (List.range nFields).map (fun i =>
+                  Expr.proj recInfo.indHash i major)
+                let synthArgs := params ++ projections
+                processCtorApp ctorHash synthArgs
+            | _ => none  -- 0 or 2+ constructors
+          | _ => none  -- mutual block
+        | none => none
 where
+  /-- Walk forallE telescope to find the trailing Sort level. -/
+  getTargetSort : Expr → Option Level
+    | .sort l => some l
+    | .forallE _ body => getTargetSort body
+    | _ => none
+  /-- Count leading forallE binders. -/
+  countForallE : Expr → Nat
+    | .forallE _ body => 1 + countForallE body
+    | _ => 0
   /-- Substitute bvars in an index argument with actual constructor arguments.
-      bvar(k) → allCtorArgs[nParams + fieldIdx - 1 - k] -/
-  substIndexArg (e : Expr) (allCtorArgs : List Expr) (nParams fieldIdx : Nat) : Expr :=
+      bvar(k) → allCtorArgs[nParams + fieldIdx - 1 - (k - localDepth)]
+      Local binders (lambda, forallE, letE) increment localDepth;
+      bvars below localDepth are left untouched (they refer to local binders). -/
+  substIndexArg (e : Expr) (allCtorArgs : List Expr) (nParams fieldIdx : Nat)
+      (localDepth : Nat := 0) : Expr :=
     match e with
     | .bvar k =>
-      let targetIdx := nParams + fieldIdx - 1 - k
-      allCtorArgs.getD targetIdx (.sort .zero)
-    | .sort l => .sort l
-    | .const h ls => .const h ls
+      if k < localDepth then .bvar k
+      else
+        let adjustedK := k - localDepth
+        let targetIdx := nParams + fieldIdx - 1 - adjustedK
+        allCtorArgs.getD targetIdx (.sort .zero)
     | .app f a =>
-      .app (substIndexArg f allCtorArgs nParams fieldIdx) (substIndexArg a allCtorArgs nParams fieldIdx)
+      .app (substIndexArg f allCtorArgs nParams fieldIdx localDepth)
+           (substIndexArg a allCtorArgs nParams fieldIdx localDepth)
     | .lam ty body =>
-      .lam (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
+      .lam (substIndexArg ty allCtorArgs nParams fieldIdx localDepth)
+           (substIndexArg body allCtorArgs nParams fieldIdx (localDepth + 1))
     | .forallE ty body =>
-      .forallE (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
+      .forallE (substIndexArg ty allCtorArgs nParams fieldIdx localDepth)
+               (substIndexArg body allCtorArgs nParams fieldIdx (localDepth + 1))
     | .letE ty val body =>
-      .letE (substIndexArg ty allCtorArgs nParams fieldIdx) (substIndexArg val allCtorArgs nParams fieldIdx) (substIndexArg body allCtorArgs nParams (fieldIdx + 1))
-    | .proj h i s => .proj h i (substIndexArg s allCtorArgs nParams fieldIdx)
-    | .iref idx ls => .iref idx ls
+      .letE (substIndexArg ty allCtorArgs nParams fieldIdx localDepth)
+            (substIndexArg val allCtorArgs nParams fieldIdx localDepth)
+            (substIndexArg body allCtorArgs nParams fieldIdx (localDepth + 1))
+    | .proj h i s => .proj h i (substIndexArg s allCtorArgs nParams fieldIdx localDepth)
+    | other => other  -- sort, const, iref unchanged
   buildMinorArgs (fields : List Expr) (idx : Nat)
       (recFields : List (Nat × Nat × List Expr))
       (blockHash : Hash) (univs : List Level) (recPrefix : List Expr)

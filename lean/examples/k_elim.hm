@@ -1,0 +1,21 @@
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-- K-elimination: Eq.rec on axiom proof (can't reduce to refl)
+axiom my_proof : Eq Nat Nat.zero Nat.zero
+
+-- This requires K: Eq.rec applied to my_proof must reduce
+def k_test : Nat :=
+  Eq.rec.{1} Nat Nat.zero
+    (fun (b : Nat) (h : Eq Nat Nat.zero b) => Nat)
+    (Nat.succ Nat.zero)
+    Nat.zero
+    my_proof
+
+-- k_test should definitionally equal (Nat.succ Nat.zero) via K
+def k_check : Eq Nat k_test (Nat.succ Nat.zero) :=
+  Eq.refl Nat (Nat.succ Nat.zero)

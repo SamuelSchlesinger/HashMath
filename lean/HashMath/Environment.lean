@@ -73,9 +73,15 @@ where
       match domTy.getAppFn with
       | .iref targetIdx _ =>
         let allArgs := domTy.getAppArgs
-        -- Drop the first numParams args (which are the inductive's parameters)
-        let indexArgs := allArgs.drop numParams
-        (idx, targetIdx, indexArgs) :: go body (idx + 1)
+        if allArgs.length < numParams then go body (idx + 1)
+        else
+          let paramArgs := allArgs.take numParams
+          let expectedParams := (List.range numParams).map
+            (fun i => Expr.bvar (idx + numParams - 1 - i))
+          if paramArgs != expectedParams then go body (idx + 1)
+          else
+            let indexArgs := allArgs.drop numParams
+            (idx, targetIdx, indexArgs) :: go body (idx + 1)
       | _ => go body (idx + 1)
     | _, _ => []
 

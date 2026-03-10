@@ -1,0 +1,13 @@
+-- SOUNDNESS: Nested positivity violation hidden behind a definition.
+-- The positivity checker must unfold definitions to detect negative occurrences.
+-- F hides the negative occurrence: F T = T → T.
+
+def F : Type → Type := fun (T : Type) => T → T
+
+inductive C (A : Type) : Type where
+  | mk : F A → C A
+
+-- E uses C E as a field. Since C's parameter A appears negatively
+-- in C.mk's field (F A = A → A), this is a nested positivity violation.
+inductive E : Type where
+  | node : C E → E

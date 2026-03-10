@@ -62,13 +62,14 @@ partial def elabExprCore (ctx : ElabContext)
   let recLocal := fun name => elabExprCore (ctx.pushLocal name) irefCtx
   match e with
   | .var name univArgs =>
-    -- Check type names first (for constructor types in inductive blocks)
-    match irefCtx.bind (fun (typeNames, univLevels) =>
-        (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
-    | some e => .ok e
+    -- Check local variables first (they shadow type names and constants)
+    match listIndexOf ctx.locals name with
+    | some idx => .ok (.bvar idx)
     | none =>
-      match listIndexOf ctx.locals name with
-      | some idx => .ok (.bvar idx)
+      -- Then check type names (for constructor types in inductive blocks)
+      match irefCtx.bind (fun (typeNames, univLevels) =>
+          (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
+      | some e => .ok e
       | none =>
         match ctx.constants[name]? with
         | some h => do

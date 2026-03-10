@@ -177,24 +177,36 @@ where
     | _, _ => true
 
 /-- Determine if large elimination is allowed for this inductive type.
-    - Non-Prop inductive (target Sort >= 1): true
-    - Prop with 0 constructors (empty type): true
-    - Prop with 1 constructor where all fields (after params) are in Prop: true
-    - Otherwise: false -/
+    - Non-Prop inductive (target Sort definitively >= 1): true
+    - Prop (or potentially Prop) with 0 constructors (empty type): true
+    - Prop (or potentially Prop) with 1 constructor where all fields are in Prop: true
+    - Otherwise: false
+    For polymorphic target universes, conservatively applies Prop rules. -/
 private def computeAllowsLargeElim (block : InductiveBlock) (typeIdx : Nat) : Bool :=
   match block.types[typeIdx]? with
-  | none => true
+  | none => false  -- conservative: missing type blocks large elim
   | some indTy =>
     let targetSort := getTargetSort indTy.type
     match targetSort with
-    | some Level.zero =>
-      -- Prop type: check conditions
-      match indTy.ctors with
-      | [] => true              -- empty type: large elim OK
-      | [ctorTy] =>             -- single constructor
-        allFieldsInProp ctorTy block.numParams
-      | _ => false              -- 2+ constructors: no large elim
-    | _ => true                 -- non-Prop: large elim OK
+    | none => false  -- no sort found: conservative
+    | some l =>
+      match l.normalize.toNat with
+      | some 0 =>
+        -- Definitely Prop: check conditions
+        match indTy.ctors with
+        | [] => true              -- empty type: large elim OK
+        | [ctorTy] =>             -- single constructor
+          allFieldsInProp ctorTy block.numParams
+        | _ => false              -- 2+ constructors: no large elim
+      | some _ => true            -- Definitely non-Prop: large elim OK
+      | none =>
+        -- Polymorphic universe: could be Prop at some instantiation.
+        -- Apply Prop rules conservatively.
+        match indTy.ctors with
+        | [] => true              -- empty type: large elim OK
+        | [ctorTy] =>             -- single constructor
+          allFieldsInProp ctorTy block.numParams
+        | _ => false              -- 2+ constructors: no large elim
 
 /-- Collect minor types for all constructors across all types in the block. -/
 private def collectAllMinors (block : InductiveBlock) (blockHash : Hash) (univs : List Level)
@@ -289,7 +301,12 @@ def generateRecursorInfo (block : InductiveBlock) (typeIdx : Nat) (blockHash : H
     | some indTy => countForallE indTy.type - block.numParams
     | none => 0
   let totalMinors := block.types.foldl (fun acc indTy => acc + indTy.ctors.length) 0
-  let largeElim := computeAllowsLargeElim block typeIdx
+  -- For mutual blocks: ALL types must independently allow large elim,
+  -- since all motives share the same universe parameter.
+  let largeElim := if block.types.length > 1 then
+    (List.range block.types.length).all (computeAllowsLargeElim block)
+  else
+    computeAllowsLargeElim block typeIdx
   { indHash := typeHash
     blockHash := blockHash
     blkIdx := typeIdx
@@ -342,18 +359,22 @@ private def bvarOccursIn (idx : Nat) (e : Expr) : Bool :=
   | _ => false
 
 /-- Check strict positivity of a de Bruijn variable in an expression.
-    The variable must not appear in a negative position (domain of a forallE). -/
-private def checkBvarStrictPositivity (bvIdx : Nat) (e : Expr) : Bool :=
-  match e with
+    The variable must not appear in a negative position (domain of a forallE).
+    Normalizes through definitions to detect hidden negative occurrences. -/
+private partial def checkBvarStrictPositivity (env : Environment) (bvIdx : Nat) (e : Expr) : Bool :=
+  let e' := whnfWithIRef env e
+  match e' with
   | .forallE domTy body =>
     if bvarOccursIn bvIdx domTy then false
-    else checkBvarStrictPositivity (bvIdx + 1) body
+    else checkBvarStrictPositivity env (bvIdx + 1) body
   | _ => true
 
 /-- Check that a parameter is strictly positive in a raw constructor type.
     `ctorTy` starts from parameter binders; `numParams` is the count of params;
-    `paramIdx` is 0-indexed from the outermost parameter. -/
-private def checkParamPositiveInCtor (ctorTy : Expr) (numParams paramIdx : Nat) : Bool :=
+    `paramIdx` is 0-indexed from the outermost parameter.
+    Normalizes domains through definitions to detect hidden negative occurrences. -/
+private partial def checkParamPositiveInCtor (env : Environment) (ctorTy : Expr)
+    (numParams paramIdx : Nat) : Bool :=
   go ctorTy 0
 where
   go (ty : Expr) (depth : Nat) : Bool :=
@@ -361,9 +382,11 @@ where
     | .forallE domTy body =>
       if depth < numParams then go body (depth + 1)
       else
+        -- Normalize domain to see through definitions
+        let domTy' := whnfWithIRef env domTy
         -- At depth d, parameter paramIdx (0-indexed from outermost) is bvar (d - 1 - paramIdx)
         let pBvar := depth - 1 - paramIdx
-        if !checkBvarStrictPositivity pBvar domTy then false
+        if !checkBvarStrictPositivity env pBvar domTy' then false
         else go body (depth + 1)
     | _ => true
 
@@ -395,10 +418,11 @@ private partial def checkStrictPositivity (env : Environment) (indIndices : List
               else if argIdx >= block.numParams then false  -- iref in index arg: reject
               else
                 containerIndTy.ctors.all fun ctorTy =>
-                  checkParamPositiveInCtor ctorTy block.numParams argIdx
+                  checkParamPositiveInCtor env ctorTy block.numParams argIdx
           | none => false
         | none => false  -- iref in arg to non-inductive const (axiom): reject conservatively
-      | _ => true  -- head is iref itself or bvar: valid recursive occurrence
+      | .iref _ _ => true  -- head is iref itself: valid recursive occurrence
+      | _ => false  -- bvar or other head with iref in args: reject conservatively
 
 /-- Check that a constructor argument satisfies strict positivity.
     Normalizes through definitions to detect hidden negative occurrences.
@@ -418,13 +442,15 @@ where
         -- Normalize domain to see through definitions
         if irefOccursIn indIndices domTy then
           -- The domain mentions the inductive type — check it's strictly positive
-          checkStrictPositivity env indIndices domTy
+          if !checkStrictPositivity env indIndices domTy then false
+          else go body (depth + 1)
         else
           -- Even if iref not syntactically in domTy, the domain itself might normalize
           -- to reveal hidden negative occurrences. Check the whnf-normalized form.
           let domTy' := whnfWithIRef env domTy
           if domTy' != domTy && irefOccursIn indIndices domTy' then
-            checkStrictPositivity env indIndices domTy'
+            if !checkStrictPositivity env indIndices domTy' then false
+            else go body (depth + 1)
           else
             go body (depth + 1)
     | _ => true
@@ -471,7 +497,20 @@ def checkInductiveBlock (env : Environment) (block : InductiveBlock) : Except St
         if paramArgs != expectedParams then
           throw "checkInductiveBlock: constructor return type has wrong parameter arguments"
       | _ => throw "checkInductiveBlock: constructor must return its inductive type"
+      -- Check total argument count matches type arity
+      let expectedArity := countForallE (match block.types[typeIdx]? with
+        | some t => t.type | none => .sort .zero)
+      if retArgs.length != expectedArity then
+        throw "checkInductiveBlock: constructor return type has wrong number of arguments"
     typeIdx := typeIdx + 1
+  -- Mutual block universe restriction: all types must target the same Sort level
+  if block.types.length > 1 then
+    let levels := block.types.filterMap (fun indTy => getTargetSort indTy.type)
+    match levels with
+    | l :: rest =>
+      if !rest.all (fun l2 => l2.normalize == l.normalize) then
+        throw "checkInductiveBlock: all types in a mutual block must target the same universe"
+    | [] => throw "checkInductiveBlock: no valid type formers"
   return ()
 where
   endsInSort : Expr → Bool

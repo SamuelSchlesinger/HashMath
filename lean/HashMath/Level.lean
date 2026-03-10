@@ -57,13 +57,13 @@ def toNat : Level → Option Nat
 /-- Normalize `max l₁ l₂`, simplifying trivial cases. -/
 private def mkMaxNorm (l₁ l₂ : Level) : Level :=
   if l₁ == l₂ then l₁
-  else match l₁ with
-  | .zero => l₂
-  | _ => match l₂ with
-    | .zero => l₁
-    | _ => match l₁.toNat, l₂.toNat with
-      | some a, some b => nSucc (Nat.max a b)
-      | _, _ => .max l₁ l₂
+  else match l₁, l₂ with
+  | .zero, _ => l₂
+  | _, .zero => l₁
+  | .succ a, .succ b => .succ (mkMaxNorm a b)
+  | _, _ => match l₁.toNat, l₂.toNat with
+    | some a, some b => nSucc (Nat.max a b)
+    | _, _ => .max l₁ l₂
 
 /-- Normalize a level to a canonical form.
     `imax u 0 = 0` and `imax u (succ v) = max u (succ v)`.
@@ -102,7 +102,19 @@ where
       | some false, _ => some false
       | _, some false => some false
       | _, _ => none
-    | _ =>  -- a is succ, param, or imax
+    | .imax ia ib =>
+      -- imax ia ib = 0 when ib=0, max ia ib when ib>0
+      match ib.toNat with
+      | some 0 => some true  -- imax ia 0 = 0 ≤ anything
+      | some _ => leqCore (mkMaxNorm ia ib) b  -- ib definitely positive
+      | none =>
+        -- Conservative: max ia ib ≤ b iff ia ≤ b ∧ ib ≤ b
+        match leqCore ia b, leqCore ib b with
+        | some true, some true => some true
+        | some false, _ => some false
+        | _, some false => some false
+        | _, _ => none
+    | _ =>  -- a is succ or param
       match b with
       | .succ b' =>
         -- a ≤ b' implies a ≤ succ b'  (monotonicity)
@@ -118,6 +130,11 @@ where
         match leqCore a b₁ with
         | some true => some true
         | _ => leqCore a b₂
+      | .imax ib1 ib2 =>
+        match ib2.toNat with
+        | some 0 => leqCore a .zero  -- imax ib1 0 = 0
+        | some _ => leqCore a (mkMaxNorm ib1 ib2)  -- definitely positive
+        | none => none  -- conservative: can't determine
       | _ =>
         match a.toNat, b.toNat with
         | some n₁, some n₂ => some (n₁ ≤ n₂)

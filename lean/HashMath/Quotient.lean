@@ -23,21 +23,26 @@ def quotientType (kind : QuotKind) : Expr :=
   match kind with
   | .quot =>
     -- Quot : Π (α : Sort u). (α → α → Prop) → Sort u
+    -- Under 1 binder (α): α = bvar 0
     let sortU := Expr.sort (.param 0)
-    let α := Expr.bvar 1
+    let α := Expr.bvar 0  -- α under 1 binder
     let relTy := Expr.forallE α (Expr.forallE (α.liftN 1) (Expr.sort .zero))
     Expr.forallE sortU (Expr.forallE relTy sortU)
   | .quotMk =>
     -- Quot.mk : Π (α : Sort u) (r : α → α → Prop) (a : α). Quot r
-    -- Under 3 binders: α = bvar 2, r = bvar 1, a = bvar 0
-    -- Return type: Quot r = app (app (const quotHash [param 0]) α) r
+    -- relTy domain: under 1 binder (α), α = bvar 0
+    -- a domain: under 2 binders (α, r), α = bvar 1
+    -- Return type: under 3 binders (α, r, a), α = bvar 2, r = bvar 1
     let sortU := Expr.sort (.param 0)
-    let α₂ := Expr.bvar 2  -- α under 3 binders
-    let α₁ := Expr.bvar 1  -- α under 2 binders
-    let relTy := Expr.forallE α₁ (Expr.forallE (α₁.liftN 1) (Expr.sort .zero))
+    let α_under1 := Expr.bvar 0  -- α under 1 binder (for relTy domain)
+    let relTy := Expr.forallE α_under1 (Expr.forallE (α_under1.liftN 1) (Expr.sort .zero))
     let quotHash := quotientHash .quot
-    let quotReturn := Expr.app (.app (.const quotHash [.param 0]) α₂) (.bvar 1)
-    Expr.forallE sortU (Expr.forallE relTy (Expr.forallE α₂ quotReturn))
+    -- Under 3 binders: α = bvar 2, r = bvar 1
+    let α_under3 := Expr.bvar 2
+    let quotReturn := Expr.app (.app (.const quotHash [.param 0]) α_under3) (.bvar 1)
+    -- Under 2 binders: α = bvar 1
+    let α_under2 := Expr.bvar 1
+    Expr.forallE sortU (Expr.forallE relTy (Expr.forallE α_under2 quotReturn))
   | .quotLift =>
     -- Quot.lift : {α : Sort u} → {r : α → α → Prop} → {β : Sort v} →
     --             (f : α → β) → (∀ a b, r a b → f a = f b) → Quot r → β

@@ -1,0 +1,66 @@
+-- SOUNDNESS BUG: Mutual inductive large elimination bypass → proof of False
+--
+-- Root cause: In a mutual inductive block where type A : Type and type B : Prop,
+-- A.rec has large elimination (motive targets Type). This means A.rec's motive
+-- for B also targets Type, effectively granting large elimination from B.
+-- Combined with proof irrelevance of B, this allows casting between arbitrary types.
+--
+-- The fix: When generating a mutual recursor, if any type in the block is Prop
+-- and does NOT independently allow large elimination, the motives for that type
+-- in ALL recursors in the block must be restricted to Prop (Sort 0).
+-- Alternatively, the entire block's recursors should have a single motive universe
+-- that is the minimum safe level for all types in the block.
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Empty : Type where
+
+inductive Unit : Type where
+  | star : Unit
+
+-- A : Type (allows large elimination)
+-- B : Prop with Nat field (should NOT allow large elimination)
+mutual
+  inductive A : Type where
+    | mk : B → A
+  inductive B : Prop where
+    | mk : Nat → B
+end
+
+-- Step 1: Define isZero : Nat → Type (maps 0 → Unit, succ _ → Empty)
+def isZero : Nat → Type :=
+  Nat.rec.{2}
+    (fun (_ : Nat) => Type)
+    Unit
+    (fun (_ : Nat) (_ : Type) => Empty)
+
+-- Step 2: Use A.rec.{2} to define typeOf : A → Type
+-- The motive for B targets Type 1 (Sort 2), and the minor for B.mk
+-- maps Nat values to types via isZero. This should be impossible!
+def mA : A → Type 1 := fun (_ : A) => Type
+def mB : B → Type 1 := fun (_ : B) => Type
+def minA : ∀ (_ : B) (_ : Type), Type := fun (_ : B) (ih : Type) => ih
+
+def typeOf : A → Type :=
+  A.rec.{2} mA mB minA isZero
+
+-- typeOf (A.mk (B.mk 0)) = Unit
+-- typeOf (A.mk (B.mk 1)) = Empty
+
+-- Step 3: Proof irrelevance transport
+-- Since B : Prop, all b1 b2 : B are definitionally equal.
+-- Therefore P (A.mk b1) = P (A.mk b2) for any P : A → Type.
+-- The identity function type-checks as a transport:
+def type_transport : ∀ (b1 : B) (b2 : B) (P : A → Type), P (A.mk b1) → P (A.mk b2) :=
+  fun (b1 : B) (b2 : B) (P : A → Type) (h : P (A.mk b1)) => h
+
+-- Step 4: Cast Unit → Empty using typeOf as the motive
+def unit_to_empty : Unit → Empty :=
+  fun (u : Unit) =>
+    type_transport (B.mk Nat.zero) (B.mk (Nat.succ Nat.zero)) typeOf u
+
+-- Step 5: Prove False (construct an inhabitant of Empty)
+def false_proof : Empty :=
+  unit_to_empty Unit.star

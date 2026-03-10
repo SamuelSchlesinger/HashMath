@@ -1,0 +1,21 @@
+inductive Prod (A : Type) (B : Type) : Type where
+  | mk : A → B → Prod A B
+
+inductive Eq (A : Type) (a : A) : A → Prop where
+  | refl : Eq A a a
+
+-- fst/snd via Prod.rec
+def Prod.fst : ∀ (A : Type) (B : Type), Prod A B → A :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Prod.rec.{1} A B (fun (_ : Prod A B) => A) (fun (a : A) (_ : B) => a) p
+
+def Prod.snd : ∀ (A : Type) (B : Type), Prod A B → B :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Prod.rec.{1} A B (fun (_ : Prod A B) => B) (fun (_ : A) (b : B) => b) p
+
+-- Struct eta: mk(fst(p), snd(p)) = p
+-- Requires Prod.rec to fire on non-constructor p via struct eta expansion
+def prod_eta : ∀ (A : Type) (B : Type) (p : Prod A B),
+    Eq (Prod A B) (Prod.mk A B (Prod.fst A B p) (Prod.snd A B p)) p :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    Eq.refl (Prod A B) p

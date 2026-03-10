@@ -1,0 +1,7 @@
+-- SOUNDNESS: Higher-order parameter defeats positivity check.
+-- Bad (F : Prop → Prop) : Prop with mk : F (Bad F) → Bad F
+-- When F = fun P => P → False, this is Russell's paradox.
+-- Fix: reject iref in args of bvar head.
+
+inductive Bad (F : Prop → Prop) : Prop where
+  | mk : F (Bad F) → Bad F

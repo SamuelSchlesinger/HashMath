@@ -1,0 +1,10 @@
+-- Defense-in-depth: inductive type former that is not well-typed.
+-- The parameter type Nat.zero is not a Sort, so the type former
+-- cannot be well-formed.
+
+inductive Nat : Type where
+  | zero : Nat
+  | succ : Nat → Nat
+
+inductive Bad (x : Nat.zero) : Type where
+  | mk : Bad x

@@ -10,12 +10,23 @@ namespace HashMath
 
 /-- Check level equality after normalization.
     Falls back to numeric comparison for closed ground levels. -/
-def isLevelDefEq (l₁ l₂ : Level) : Bool :=
-  let n₁ := l₁.normalize
-  let n₂ := l₂.normalize
-  n₁ == n₂ || match (n₁.toNat, n₂.toNat) with
-    | (some a, some b) => a == b
-    | _ => false
+partial def isLevelDefEq (l₁ l₂ : Level) : Bool :=
+  levelEqNorm l₁.normalize l₂.normalize
+where
+  levelEqNorm (a b : Level) : Bool :=
+    a == b ||
+    match (a.toNat, b.toNat) with
+    | (some n₁, some n₂) => n₁ == n₂
+    | _ =>
+      match a, b with
+      | .succ a', .succ b' => levelEqNorm a' b'
+      | .max a₁ a₂, .max b₁ b₂ =>
+        (levelEqNorm a₁ b₁ && levelEqNorm a₂ b₂) ||
+        (levelEqNorm a₁ b₂ && levelEqNorm a₂ b₁)
+      | .imax .zero x, _ => levelEqNorm x b
+      | _, .imax .zero x => levelEqNorm a x
+      | .imax a₁ a₂, .imax b₁ b₂ => levelEqNorm a₁ b₁ && levelEqNorm a₂ b₂
+      | _, _ => false
 
 /-- Check cumulativity: Sort l₁ ≤ Sort l₂ -/
 def isLevelLeq (l₁ l₂ : Level) : Option Bool :=
@@ -24,10 +35,22 @@ def isLevelLeq (l₁ l₂ : Level) : Option Bool :=
 -- Helper to extract the field type from a constructor type,
 -- substituting parameters and earlier fields from the struct value.
 private partial def getFieldType (env : Environment) (ctorTy : Expr) (numParams : Nat)
-    (idx : Nat) (struct : Expr) (_typeName : Hash) : Expr :=
+    (idx : Nat) (struct : Expr) (typeName : Hash)
+    (structTy : Option Expr := none) : Expr :=
   let structWhnf := whnf env struct
-  let (_, structArgs) := structWhnf.getAppFnArgs
-  go ctorTy 0 numParams idx structArgs
+  let (fn, structArgs) := structWhnf.getAppFnArgs
+  let effectiveArgs := match fn with
+    | .const _ _ => structArgs  -- constructor: use args directly
+    | _ =>
+      -- Non-constructor: use type args for params, projections for fields
+      match structTy with
+      | some sTy =>
+        let sTyWhnf := whnf env sTy
+        let typeArgs := sTyWhnf.getAppArgs
+        let fieldProjections := (List.range idx).map (fun i => Expr.proj typeName i struct)
+        typeArgs ++ fieldProjections
+      | none => structArgs
+  go ctorTy 0 numParams idx effectiveArgs
 where
   go (ty : Expr) (current : Nat) (numParams idx : Nat)
       (structArgs : List Expr) : Expr :=
@@ -39,6 +62,19 @@ where
         let argVal := structArgs.getD current (.sort .zero)
         go (body.instantiate argVal) (current + 1) numParams idx structArgs
     | _ => .sort .zero
+
+/-- Resolve iref nodes in a single-type inductive block.
+    All iref indices map to the given type hash (since there's only one type). -/
+private def resolveIRefSingleType (typeName : Hash) : Expr → Expr
+  | .iref _ ls => .const typeName ls
+  | .bvar i => .bvar i
+  | .sort l => .sort l
+  | .const h ls => .const h ls
+  | .app f a => .app (resolveIRefSingleType typeName f) (resolveIRefSingleType typeName a)
+  | .lam ty body => .lam (resolveIRefSingleType typeName ty) (resolveIRefSingleType typeName body)
+  | .forallE ty body => .forallE (resolveIRefSingleType typeName ty) (resolveIRefSingleType typeName body)
+  | .letE ty val body => .letE (resolveIRefSingleType typeName ty) (resolveIRefSingleType typeName val) (resolveIRefSingleType typeName body)
+  | .proj h i s => .proj h i (resolveIRefSingleType typeName s)
 
 /-- A local context mapping de Bruijn indices to their types.
     Index 0 is the most recently bound variable. -/
@@ -96,7 +132,7 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
     match fTy' with
     | .forallE domTy bodyTy =>
       let aTy ← inferType env ctx a
-      if !(isDefEq env ctx aTy domTy) then
+      if !(isSubtype env ctx aTy domTy) then
         .error "inferType: argument type mismatch in application"
       else
         .ok (bodyTy.instantiate a)
@@ -130,13 +166,15 @@ partial def inferType (env : Environment) (ctx : LocalCtx) (e : Expr) : Except S
       let bodyTy ← inferType env (ty :: ctx) body
       .ok (bodyTy.instantiate val)
   | .proj typeName idx struct => do
-    let _structTy ← inferType env ctx struct
+    let structTy ← inferType env ctx struct
     match env.getInductiveBlockForType typeName with
     | some (block, _) =>
       match block.types with
       | [indTy] =>
         match indTy.ctors with
-        | [ctorTy] => .ok (getFieldType env ctorTy block.numParams idx struct typeName)
+        | [rawCtorTy] =>
+          let ctorTy := resolveIRefSingleType typeName rawCtorTy
+          .ok (getFieldType env ctorTy block.numParams idx struct typeName (some structTy))
         | _ => .error "inferType: proj on non-structure"
       | _ => .error "inferType: proj on mutual inductive"
     | none => .error "inferType: unknown inductive for projection"
@@ -207,6 +245,15 @@ partial def isDefEqCore (env : Environment) (ctx : LocalCtx) (t s : Expr) : Bool
 /-- Structural η: if both terms have the same structure type (single-constructor inductive),
     compare field-by-field via projections. -/
 partial def structEtaCheck (env : Environment) (ctx : LocalCtx) (t s : Expr) : Bool :=
+  -- Only try struct eta if at least one side is a constructor application (after whnf).
+  -- Otherwise projections won't reduce and we'll loop:
+  -- structEtaCheck(t,s) → isDefEq(proj i t, proj i s) → isDefEq(t,s) → structEtaCheck(t,s)
+  let isCtorApp (e : Expr) : Bool :=
+    match (whnf env e).getAppFn with
+    | .const h _ => match env.getConstructorInfo h with | some _ => true | none => false
+    | _ => false
+  if !isCtorApp t && !isCtorApp s then false
+  else
   match inferType env ctx t with
   | .error _ => false
   | .ok tTy =>
@@ -225,7 +272,9 @@ partial def structEtaCheck (env : Environment) (ctx : LocalCtx) (t s : Expr) : B
             match sTyFn with
             | .const sTyHash _ =>
               if tyHash == sTyHash then
-                match block.numFields with
+                -- Also check full applied types match
+                if !(isDefEq env ctx tTy' sTy') then false
+                else match block.numFields with
                 | some nFields =>
                   if nFields == 0 then true
                   else (List.range nFields).all fun i =>
