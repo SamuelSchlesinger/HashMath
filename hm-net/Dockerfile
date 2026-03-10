@@ -34,4 +34,4 @@ VOLUME /data
 EXPOSE 4256 4257
 
 ENTRYPOINT ["hm-net"]
-CMD ["--data-dir", "/data", "--listen", "/ip4/0.0.0.0/tcp/4256", "--health-port", "4257"]
+CMD ["--data-dir", "/data", "--listen", "/ip4/0.0.0.0/tcp/4256", "--health-port", "4257", "--headless", "--public"]

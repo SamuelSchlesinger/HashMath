@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "hm-mcp": {
+      "type": "stdio",
+      "command": "./lean/.lake/build/bin/hm",
+      "args": ["mcp"]
+    }
+  }
+}

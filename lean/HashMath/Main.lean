@@ -5,6 +5,7 @@
 import HashMath.Elab
 import HashMath.Subterm
 import HashMath.Net.Client
+import HashMath.MCP.Server
 
 open HashMath
 open HashMath.Net
@@ -276,6 +277,8 @@ def main (args : List String) : IO Unit := do
     match HashMath.parseCommand s3a with
     | .error e => do stdout.putStrLn s!"  Error: {e}"; stdout.flush
     | .ok (_, _) => do stdout.putStrLn s!"  OK"; stdout.flush
+
+  | ["mcp"] => MCP.mcpServer
 
   | ["--test-ipc"] => do
     let hmNet ← findHmNet
