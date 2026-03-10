@@ -1,3 +1,8 @@
+// NOTE: File I/O in this module is synchronous because the libp2p RecordStore
+// trait requires synchronous methods (get, put, remove, records). With a 1 MB
+// max record size, single-file reads/writes complete in microseconds, so
+// briefly blocking the async runtime is acceptable.
+
 //! Persistent file-backed record store for Kademlia.
 //!
 //! Each record is stored as a file: `<data_dir>/records/<hex-key>`.
@@ -19,6 +24,16 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Set file permissions to the given mode (unix only).
+#[cfg(unix)]
+fn set_permissions(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = std::fs::Permissions::from_mode(mode);
+    if let Err(e) = std::fs::set_permissions(path, perms) {
+        tracing::warn!("failed to set permissions on {}: {}", path.display(), e);
+    }
+}
+
 /// A Kademlia record store backed by the filesystem.
 pub struct FileStore {
     data_dir: PathBuf,
@@ -35,9 +50,16 @@ impl FileStore {
         Ok(Self {
             data_dir,
             local_peer_id,
-            max_records: 100_000,
-            max_record_size: 64 * 1024 * 1024, // 64 MB per record
+            max_records: 10_000,
+            max_record_size: 1_048_576, // 1 MB per record
         })
+    }
+
+    /// Override the default record limits.
+    pub fn with_limits(mut self, max_records: usize, max_record_size: usize) -> Self {
+        self.max_records = max_records;
+        self.max_record_size = max_record_size;
+        self
     }
 
     fn records_dir(&self) -> PathBuf {
@@ -134,16 +156,25 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// Load or generate a persistent keypair.
+///
+/// Sets restrictive file permissions (0o600 on keypair, 0o700 on data dir) on unix.
 pub fn load_or_generate_keypair(data_dir: &Path) -> Result<identity::Keypair> {
     let key_path = data_dir.join("keypair");
     if key_path.exists() {
         let bytes = std::fs::read(&key_path).context("reading keypair")?;
+        // Retroactively fix permissions on existing keypair files
+        #[cfg(unix)]
+        set_permissions(&key_path, 0o600);
         identity::Keypair::from_protobuf_encoding(&bytes).context("decoding keypair")
     } else {
         let key = identity::Keypair::generate_ed25519();
         let bytes = key.to_protobuf_encoding().context("encoding keypair")?;
         std::fs::create_dir_all(data_dir)?;
+        #[cfg(unix)]
+        set_permissions(data_dir, 0o700);
         std::fs::write(&key_path, &bytes).context("writing keypair")?;
+        #[cfg(unix)]
+        set_permissions(&key_path, 0o600);
         Ok(key)
     }
 }

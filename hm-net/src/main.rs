@@ -3,6 +3,7 @@
 //! Communicates with the Lean `hm` process via stdin/stdout IPC.
 //! Runs a libp2p Kademlia DHT node to store/retrieve content-addressed declarations.
 
+mod health;
 mod ipc;
 mod store;
 
@@ -18,11 +19,18 @@ use libp2p::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tracing::{info, warn};
 
+use crate::health::NodeStatus;
 use crate::ipc::{recv_request, send_response, Hash, Request, Response};
 use crate::store::{load_or_generate_keypair, FileStore};
+
+/// Maximum number of addresses to accept per peer from Identify.
+const MAX_ADDRS_PER_PEER: usize = 20;
 
 /// Combined libp2p behaviour: Kademlia + Identify + AutoNAT + Relay client.
 #[derive(NetworkBehaviour)]
@@ -48,10 +56,46 @@ impl PendingQueries {
     }
 }
 
+/// Simple token-bucket rate limiter for IPC requests.
+struct RateLimiter {
+    tokens: f64,
+    max_tokens: f64,
+    refill_rate: f64,
+    last_refill: Instant,
+}
+
+impl RateLimiter {
+    fn new(rate: f64, burst: f64) -> Self {
+        Self {
+            tokens: burst,
+            max_tokens: burst,
+            refill_rate: rate,
+            last_refill: Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_refill = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 struct Args {
     listen_addr: Multiaddr,
     bootstrap_peers: Vec<(PeerId, Multiaddr)>,
     data_dir: PathBuf,
+    max_records: usize,
+    max_record_size: usize,
+    public: bool,
+    health_port: Option<u16>,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -61,9 +105,13 @@ fn default_data_dir() -> PathBuf {
 }
 
 fn parse_args() -> Result<Args> {
-    let mut listen_addr: Multiaddr = "/ip4/0.0.0.0/tcp/4256".parse()?;
+    let mut listen_addr: Multiaddr = "/ip4/127.0.0.1/tcp/4256".parse()?;
     let mut bootstrap_peers = Vec::new();
     let mut data_dir = default_data_dir();
+    let mut max_records: usize = 10_000;
+    let mut max_record_size: usize = 1_048_576;
+    let mut public = false;
+    let mut health_port: Option<u16> = Some(4257);
 
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -96,13 +144,42 @@ fn parse_args() -> Result<Args> {
             }
             "--data-dir" | "-d" => {
                 i += 1;
-                data_dir = PathBuf::from(
-                    args.get(i).context("missing data directory")?,
-                );
+                data_dir = PathBuf::from(args.get(i).context("missing data directory")?);
             }
             "--ephemeral" => {
                 // Use a temp dir that won't persist — useful for tests
                 data_dir = std::env::temp_dir().join(format!("hm-net-{}", std::process::id()));
+            }
+            "--max-records" => {
+                i += 1;
+                max_records = args
+                    .get(i)
+                    .context("missing max-records value")?
+                    .parse()
+                    .context("invalid max-records value")?;
+            }
+            "--max-record-size" => {
+                i += 1;
+                max_record_size = args
+                    .get(i)
+                    .context("missing max-record-size value")?
+                    .parse()
+                    .context("invalid max-record-size value")?;
+            }
+            "--public" => {
+                public = true;
+            }
+            "--health-port" => {
+                i += 1;
+                health_port = Some(
+                    args.get(i)
+                        .context("missing health-port value")?
+                        .parse()
+                        .context("invalid health-port value")?,
+                );
+            }
+            "--no-health" => {
+                health_port = None;
             }
             _ => {}
         }
@@ -113,7 +190,64 @@ fn parse_args() -> Result<Args> {
         listen_addr,
         bootstrap_peers,
         data_dir,
+        max_records,
+        max_record_size,
+        public,
+        health_port,
     })
+}
+
+/// Check whether a multiaddr is valid for adding to the routing table.
+fn is_valid_addr(addr: &Multiaddr, public_only: bool) -> bool {
+    use libp2p::multiaddr::Protocol;
+
+    let mut has_ip = false;
+    let mut has_tcp = false;
+
+    for proto in addr.iter() {
+        match proto {
+            Protocol::Ip4(ip) => {
+                has_ip = true;
+                if public_only && (ip.is_loopback() || ip.is_private()) {
+                    return false;
+                }
+            }
+            Protocol::Ip6(ip) => {
+                has_ip = true;
+                if public_only && ip.is_loopback() {
+                    return false;
+                }
+            }
+            Protocol::Tcp(_) => {
+                has_tcp = true;
+            }
+            _ => {}
+        }
+    }
+
+    has_ip && has_tcp
+}
+
+/// Validate an inbound DHT record before storing.
+fn validate_inbound_record(record: &kad::Record, max_record_size: usize) -> bool {
+    let key = record.key.as_ref();
+    let value = &record.value;
+
+    // Key must be exactly 32 bytes (SHA-256 hash)
+    if key.len() != 32 {
+        return false;
+    }
+    // Value must be non-empty
+    if value.is_empty() {
+        return false;
+    }
+    // Value must not exceed max record size
+    if value.len() > max_record_size {
+        return false;
+    }
+    // First byte must be a valid serialization tag
+    let tag = value[0];
+    matches!(tag, 0x00..=0x23 | 0x30..=0x32)
 }
 
 async fn run_node<R, W>(mut stdin: R, mut stdout: W, args: Args) -> Result<()>
@@ -121,10 +255,18 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    let data_dir = args.data_dir;
+    let listen_addr = args.listen_addr;
+    let bootstrap_peers = args.bootstrap_peers;
+    let max_records = args.max_records;
+    let max_record_size = args.max_record_size;
+    let public_mode = args.public;
+    let health_port = args.health_port;
+
     // Load or generate persistent keypair
-    let local_key = load_or_generate_keypair(&args.data_dir)?;
+    let local_key = load_or_generate_keypair(&data_dir)?;
     let local_peer_id = PeerId::from(local_key.public());
-    info!(%local_peer_id, data_dir = %args.data_dir.display(), "starting hm-net node");
+    info!(%local_peer_id, data_dir = %data_dir.display(), "starting hm-net node");
     eprintln!("PEER_ID={}", local_peer_id);
 
     // Build swarm
@@ -138,9 +280,14 @@ where
         .with_relay_client(noise::Config::new, yamux::Config::default)?
         .with_behaviour(|key, relay_client| {
             let peer_id = PeerId::from(key.public());
-            let store =
-                FileStore::new(args.data_dir.clone(), peer_id).expect("failed to create store");
-            let kad_config = kad::Config::new(StreamProtocol::new("/hashmath/kad/1.0.0"));
+            let store = FileStore::new(data_dir.clone(), peer_id)
+                .expect("failed to create store")
+                .with_limits(max_records, max_record_size);
+            let mut kad_config = kad::Config::new(StreamProtocol::new("/hashmath/kad/1.0.0"));
+            kad_config.set_record_filtering(kad::StoreInserts::FilterBoth);
+            kad_config.set_replication_interval(Some(Duration::from_secs(3600)));
+            kad_config.set_publication_interval(Some(Duration::from_secs(86400)));
+            kad_config.set_record_ttl(Some(Duration::from_secs(604800)));
             let mut kademlia = kad::Behaviour::with_config(peer_id, store, kad_config);
             kademlia.set_mode(Some(Mode::Server));
             let identify = identify::Behaviour::new(identify::Config::new(
@@ -155,43 +302,73 @@ where
                 relay_client,
             })
         })?
-        .with_swarm_config(|cfg| {
-            cfg.with_idle_connection_timeout(std::time::Duration::from_secs(300))
-        })
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(300)))
         .build();
 
     // Listen
     swarm
-        .listen_on(args.listen_addr.clone())
+        .listen_on(listen_addr.clone())
         .context("failed to listen")?;
-    info!(addr = %args.listen_addr, "listening");
+    info!(addr = %listen_addr, "listening");
 
     // Bootstrap
-    for (peer_id, addr) in &args.bootstrap_peers {
+    for (peer_id, addr) in &bootstrap_peers {
         swarm
             .behaviour_mut()
             .kademlia
             .add_address(peer_id, addr.clone());
         info!(%peer_id, %addr, "added bootstrap peer");
     }
-    if !args.bootstrap_peers.is_empty() {
+    if !bootstrap_peers.is_empty() {
         swarm.behaviour_mut().kademlia.bootstrap()?;
     }
 
-    // Log record count from persistent store
-    let record_count = swarm.behaviour_mut().kademlia.store_mut().records().count();
+    // Health status
+    let status = Arc::new(NodeStatus::new());
+
+    // Initialize record count from persistent store
+    let record_count = swarm
+        .behaviour_mut()
+        .kademlia
+        .store_mut()
+        .records()
+        .count();
+    status.record_count.store(record_count, Ordering::Relaxed);
     if record_count > 0 {
         info!(record_count, "loaded records from persistent store");
     }
 
+    // Start health server
+    if let Some(port) = health_port {
+        let health_status = status.clone();
+        tokio::spawn(health::run_health_server(port, health_status));
+    }
+
+    // SIGTERM handler
+    #[cfg(unix)]
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     let mut pending = PendingQueries::new();
+    let mut rate_limiter = RateLimiter::new(100.0, 200.0);
 
     loop {
+        #[cfg(unix)]
+        let sigterm_recv = sigterm.recv();
+        #[cfg(not(unix))]
+        let sigterm_recv = std::future::pending::<Option<()>>();
+
         tokio::select! {
             req_result = recv_request(&mut stdin) => {
                 match req_result {
                     Ok(req) => {
-                        let resp = handle_request(&mut swarm, &mut pending, req);
+                        if !rate_limiter.try_acquire() {
+                            send_response(&mut stdout, &Response::Error {
+                                msg: "rate limit exceeded".to_string(),
+                            }).await?;
+                            continue;
+                        }
+                        let resp = handle_request(&mut swarm, &mut pending, req, &status);
                         match resp {
                             HandleResult::Respond(r) => {
                                 send_response(&mut stdout, &r).await?;
@@ -212,12 +389,26 @@ where
             }
 
             event = swarm.select_next_some() => {
-                if let Some(resp) = handle_swarm_event(&mut swarm, &mut pending, event) {
+                if let Some(resp) = handle_swarm_event(
+                    &mut swarm, &mut pending, event,
+                    max_record_size, public_mode, &status,
+                ) {
                     send_response(&mut stdout, &resp).await?;
                 }
             }
+
+            _ = sigterm_recv => {
+                info!("received SIGTERM, shutting down gracefully");
+                break;
+            }
         }
+
+        // Update peer count after each loop iteration
+        let peer_count = swarm.connected_peers().count();
+        status.peer_count.store(peer_count, Ordering::Relaxed);
     }
+
+    Ok(())
 }
 
 enum HandleResult {
@@ -230,6 +421,7 @@ fn handle_request(
     swarm: &mut libp2p::Swarm<Behaviour>,
     pending: &mut PendingQueries,
     req: Request,
+    status: &Arc<NodeStatus>,
 ) -> HandleResult {
     match req {
         Request::Ping => HandleResult::Respond(Response::Pong),
@@ -253,6 +445,7 @@ fn handle_request(
                     msg: format!("local store failed: {:?}", e),
                 });
             }
+            status.record_count.fetch_add(1, Ordering::Relaxed);
             // Best-effort DHT replication
             match swarm
                 .behaviour_mut()
@@ -299,9 +492,35 @@ fn handle_swarm_event(
     swarm: &mut libp2p::Swarm<Behaviour>,
     pending: &mut PendingQueries,
     event: SwarmEvent<BehaviourEvent>,
+    max_record_size: usize,
+    public_mode: bool,
+    status: &Arc<NodeStatus>,
 ) -> Option<Response> {
     match event {
         SwarmEvent::Behaviour(BehaviourEvent::Kademlia(kad_event)) => match kad_event {
+            // Inbound PUT record validation (FilterBoth mode)
+            kad::Event::InboundRequest {
+                request: kad::InboundRequest::PutRecord { record, .. },
+            } => {
+                if let Some(record) = record {
+                    if validate_inbound_record(&record, max_record_size) {
+                        if let Err(e) = swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .store_mut()
+                            .put(record)
+                        {
+                            warn!("failed to store inbound record: {:?}", e);
+                        } else {
+                            status.record_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                    } else {
+                        warn!("rejected invalid inbound record");
+                    }
+                }
+                None
+            }
+
             kad::Event::OutboundQueryProgressed {
                 id,
                 result: kad::QueryResult::GetRecord(result),
@@ -359,25 +578,38 @@ fn handle_swarm_event(
             info: identify_info,
             ..
         })) => {
+            let mut added = 0;
             for addr in identify_info.listen_addrs {
-                swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(&peer_id, addr);
+                if added >= MAX_ADDRS_PER_PEER {
+                    warn!(
+                        %peer_id,
+                        "dropped addresses beyond limit of {}",
+                        MAX_ADDRS_PER_PEER
+                    );
+                    break;
+                }
+                if is_valid_addr(&addr, public_mode) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, addr);
+                    added += 1;
+                }
             }
             None
         }
 
         SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::Event::StatusChanged {
-            new: status,
+            new: new_status,
             ..
         })) => {
-            info!(?status, "NAT status changed");
+            info!(?new_status, "NAT status changed");
             None
         }
 
         SwarmEvent::NewListenAddr { address, .. } => {
             info!(%address, "new listen address");
+            status.ready.store(true, Ordering::Relaxed);
             None
         }
 

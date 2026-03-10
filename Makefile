@@ -64,3 +64,15 @@ test-dht: build
 clean:
 	cd lean && lake clean
 	cd hm-net && cargo clean
+
+# ── Docker ──────────────────────────────────────────────────────
+
+DOCKER_TAG ?= hm-net:latest
+
+.PHONY: docker docker-push
+
+docker:
+	cd hm-net && docker build -t $(DOCKER_TAG) .
+
+docker-push: docker
+	docker push $(DOCKER_TAG)

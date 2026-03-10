@@ -223,7 +223,7 @@ pub async fn recv_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8
         .await
         .context("reading IPC frame length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 64 * 1024 * 1024 {
+    if len > 2 * 1024 * 1024 {
         bail!("IPC frame too large: {} bytes", len);
     }
     let mut payload = vec![0u8; len];
