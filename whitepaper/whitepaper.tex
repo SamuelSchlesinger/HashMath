@@ -287,7 +287,8 @@ The four excluded constructors are:
 
 \begin{table}[t]
 \centering
-\begin{tabular}{llcl}
+\small
+\begin{tabular}{llcp{5.2cm}}
 \hline
 \textbf{Lean~4 Constructor} & \textbf{Purpose} & \textbf{HashMath} & \textbf{Notes} \\
 \hline
@@ -304,7 +305,7 @@ The four excluded constructors are:
 \texttt{mdata}   & Metadata             & ---        & Elaboration only \\
 \texttt{proj}    & Projection           & \checkmark & \\
 ---              & Block-relative ref   & \checkmark & \texttt{iref}: resolved to \texttt{const} \\
----              & Hash reference       & \checkmark & \texttt{href}: storage layer only ($\alpha{=}\bot$ blocks kernel use) \\
+---              & Hash reference       & \checkmark & \texttt{href}: storage only ($\alpha{=}\bot$ blocks kernel use) \\
 \hline
 \end{tabular}
 \caption{Lean~4 \texttt{Expr} constructors and their status in HashMath.
@@ -483,8 +484,8 @@ major premise does not reduce to a constructor:
   \item \textbf{Structure expansion}: if $I$ is a single-constructor type with fields
         (a structure) and the major premise does not reduce to a constructor
         application, it is expanded to
-        $c(\bar{p},\, \proj(h_I, 0, x),\, \ldots,\, \proj(h_I, n{-}1, x))$ where $x$
-        is the major premise, enabling $\iota$-reduction to proceed.
+        \[c(\bar{p},\, \proj(h_I, 0, x),\, \ldots,\, \proj(h_I, n{-}1, x))\]
+        where $x$ is the major premise, enabling $\iota$-reduction to proceed.
 \end{itemize}
 
 CIC enjoys the property that definitional equality is decidable, which is essential for
@@ -1074,10 +1075,10 @@ An embedding $\textsf{Expr}(\bot) \hookrightarrow \textsf{Expr}(\alpha)$ is prov
 for safe upcast.
 
 \paragraph{Hash preservation.}
-Shattering does not change a term's content hash.
-Both $\hash(e)$ and $\hash(\textsf{reassemble}(\textsf{shatter}_\theta(e)))$ equal the same value,
-because $\textsf{reassemble}$ recovers the original term exactly, and canonical serialization
-is deterministic.
+Shattering does not change a term's content hash:
+\[\hash(e) \;=\; \hash\bigl(\textsf{reassemble}(\textsf{shatter}_\theta(e))\bigr)\]
+because $\textsf{reassemble}$ recovers the original term exactly
+and canonical serialization is deterministic.
 The stored subterm entries use the \emph{canonical} serialization (no $\hrefE$ nodes),
 so each entry is self-contained.
 

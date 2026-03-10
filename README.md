@@ -276,7 +276,7 @@ Records are persisted to disk so nodes retain data across restarts. See
 
 ```mermaid
 graph TB
-    subgraph Untrusted["Untrusted (bugs here cannot cause unsoundness)"]
+    subgraph Untrusted["Untrusted — bugs cannot cause unsoundness"]
         direction TB
         UI["UI / REPL"]
         Names["Name Registry"]
