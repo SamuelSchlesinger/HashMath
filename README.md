@@ -343,4 +343,4 @@ See [MANUAL.md](MANUAL.md) for networking, DHT, and the full command reference.
 
 ## Further reading
 
-The full technical specification is in the [whitepaper](whitepaper.pdf).
+The full technical specification is in the [whitepaper](whitepaper/whitepaper.pdf).
