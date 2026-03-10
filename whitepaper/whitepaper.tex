@@ -160,6 +160,7 @@ type-to-inhabitants index and interoperability with existing proof assistants.
 Section~\ref{sec:collaboration} discusses AI and human collaboration at scale.
 Section~\ref{sec:challenges} addresses challenges and limitations.
 Section~\ref{sec:related} surveys related work.
+Section~\ref{sec:prototype} describes the reference implementation's distribution prototype.
 Section~\ref{sec:roadmap} presents a phased development roadmap, and
 Section~\ref{sec:indices} outlines future work on advanced indices.
 
@@ -468,6 +469,24 @@ equivalences:
         where $c$ is the unique constructor.
 \end{itemize}
 
+Two additional completeness rules handle cases where $\iota$-reduction is stuck because the
+major premise does not reduce to a constructor:
+
+\begin{itemize}[nosep]
+  \item \textbf{K-like reduction}: if $I$ is a $\Prop$ type with exactly one constructor
+        and zero fields (e.g., $\textsf{True}$, or $\Eq$ at fixed indices), and the
+        recursor's major premise does not reduce to a constructor application,
+        the unique constructor is synthesized.
+        This is sound because $\Prop$ proof irrelevance guarantees exactly one
+        constructor value.
+
+  \item \textbf{Structure expansion}: if $I$ is a single-constructor type with fields
+        (a structure) and the major premise does not reduce to a constructor
+        application, it is expanded to
+        $c(\bar{p},\, \proj(h_I, 0, x),\, \ldots,\, \proj(h_I, n{-}1, x))$ where $x$
+        is the major premise, enabling $\iota$-reduction to proceed.
+\end{itemize}
+
 CIC enjoys the property that definitional equality is decidable, which is essential for
 typechecking to be decidable.
 
@@ -608,6 +627,54 @@ The identity type $\Eq$ is an inductive family with $k=1$ universe parameter and
   \;\right\}
 \]
 \end{example}
+
+\paragraph{Recursor shape.}
+For each inductive type, the kernel generates a \emph{recursor} (elimination principle)
+whose type has the form:
+\[
+  \textsf{rec}_I : \Pi\;\bar{p}.\; \Pi\;(C : I\;\bar{p} \to \Sort(j)).\;
+  \bar{m} \to \Pi\;(x : I\;\bar{p}).\; C\;x
+\]
+where $\bar{p}$ are the type's parameters, $C$ is the \emph{motive}
+(specifying what is to be proved or computed for each element of $I$),
+$\bar{m}$ are the \emph{minor premises} (one per constructor, handling recursive
+arguments via induction hypotheses), and $x$ is the \emph{major premise}
+(the value being eliminated).
+The universe $j$ of the motive is subject to the large elimination restriction below.
+For indexed families (like $\Eq$), the motive additionally abstracts over the index arguments.
+
+\paragraph{Large elimination restriction.}
+$\Prop$ is impredicative (one can quantify over all types and remain in $\Prop$)
+and enjoys proof irrelevance (all proofs of the same proposition are definitionally equal).
+Together, these features require restricting when a $\Prop$ inductive may eliminate
+into $\Type$---so-called \emph{large elimination}.
+
+Without the restriction, one could define $\textsf{Wrap}(A : \Sort(u)) : \Prop$ with a
+single constructor $\textsf{mk} : A \to \textsf{Wrap}\;A$, extract data via large elimination
+($\textsf{unwrap} : \textsf{Wrap}\;A \to A$), and then derive $\textsf{true} \equiv \textsf{false}$
+from proof irrelevance ($\textsf{mk}\;\textsf{true} \equiv \textsf{mk}\;\textsf{false}$
+since both inhabit the same $\Prop$).
+
+The rule is: a $\Prop$ inductive \emph{allows} large elimination (motive in $\Sort(j)$ for any $j$)
+only when every constructor's non-parameter fields have types in $\Prop$.
+Otherwise, the recursor's motive is restricted to $\Prop$ (i.e., $j = 0$).
+Examples:
+\begin{itemize}[nosep]
+  \item $\textsf{True}$ (one constructor, zero fields) --- large elimination allowed.
+  \item $\Eq$ (one constructor, zero non-parameter fields) --- large elimination allowed.
+        This is what makes $\Eq.\textsf{rec}$ useful for rewriting.
+  \item $\textsf{And}$ (one constructor, two $\Prop$ fields) --- large elimination allowed.
+  \item $\textsf{Or}$ (two constructors) --- large elimination \textbf{blocked}.
+        One cannot decide which disjunct holds.
+  \item $\textsf{Exists}$ (constructor field in $\Type$) --- large elimination \textbf{blocked}.
+        One cannot extract the witness.
+\end{itemize}
+When the target sort of the inductive type is polymorphic (e.g., $\Sort(u)$ where $u$
+could be instantiated to zero), the restriction is applied conservatively: if any
+instantiation could place the type in $\Prop$ with a $\Type$-level field,
+large elimination is blocked.
+In mutual inductive blocks, the restriction is applied block-wide: if any type
+in the block requires restricted elimination, all recursors in the block are restricted.
 
 %% --------------------------------------------------
 \subsection{Quotient Types}
@@ -1799,8 +1866,10 @@ We outline a phased development plan, noting progress to date.
 The CIC type checker, SHA-256 hash function, canonical binary serialization,
 and content-addressed environment are implemented in Lean~4 with no external
 dependencies.
-The implementation includes 47 automated tests covering type checking,
-positivity, universe constraints, and error rejection.
+The implementation includes over 90 automated tests: 34 test groups in the
+internal test suite, 24 correct example files, and 32 files that must be
+rejected---covering type checking, positivity, universe constraints, large
+elimination, and error rejection.
 
 \paragraph{Phase 2: Distribution Prototype \textnormal{(complete)}.}
 A working peer-to-peer distribution layer is implemented using a Rust sidecar

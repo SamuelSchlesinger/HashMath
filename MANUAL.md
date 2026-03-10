@@ -1,6 +1,6 @@
 # HashMath User Manual
 
-## Building
+## Installation
 
 HashMath has two components: the Lean CLI (`hm`) and the Rust networking
 sidecar (`hm-net`).
@@ -10,18 +10,39 @@ sidecar (`hm-net`).
 - [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.28.0+)
 - [Rust](https://rustup.rs/) (stable toolchain)
 
-### Build
+### Build and install
 
 ```sh
-# Build the Lean CLI
-cd lean && lake build hm
-
-# Build the Rust sidecar
-cd hm-net && cargo build --release
+make && make install
 ```
 
-The `hm` binary is at `lean/.lake/build/bin/hm`.
-The `hm-net` binary is at `hm-net/target/release/hm-net`.
+This builds both components and copies the binaries to `~/.local/bin/`.
+Make sure `~/.local/bin` is on your `PATH`:
+
+```sh
+# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.) if not already present
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To install elsewhere, set `PREFIX`:
+
+```sh
+make install PREFIX=/usr/local    # installs to /usr/local/bin
+```
+
+### Building without installing
+
+```sh
+make          # or: make build
+```
+
+The binaries are at `lean/.lake/build/bin/hm` and `hm-net/target/release/hm-net`.
+
+### Uninstall
+
+```sh
+make uninstall
+```
 
 ## Getting started
 
@@ -83,13 +104,12 @@ declarations across machines. The networking layer consists of:
 
 ### Configuration
 
-Tell `hm` where to find the sidecar binary:
+After `make install`, both `hm` and `hm-net` are on your PATH and no extra
+configuration is needed. If you need to use a different sidecar binary
+(e.g., a debug build), set the `HM_NET_PATH` environment variable:
 
 ```sh
-# Option 1: environment variable
 export HM_NET_PATH=/path/to/hm-net
-
-# Option 2: place hm-net on your PATH
 ```
 
 ### Starting a node
@@ -221,11 +241,8 @@ RUST_LOG=debug hm-net
 ## Running tests
 
 ```sh
-# Lean type-checker tests (47 tests)
-cd lean && bash test.sh
-
-# DHT integration test (IPC + two-node propagation)
-bash test-dht.sh
+make test       # type-checker tests (examples/ pass, wrong/ rejected)
+make test-dht   # DHT integration test (IPC + two-node propagation)
 ```
 
 ## IPC protocol

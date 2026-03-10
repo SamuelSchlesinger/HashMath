@@ -143,6 +143,24 @@ contained soundness bugs (see commit history). Until the kernel is validated
 against an established CIC specification, treat it as an illustration of the
 proposed architecture rather than a trustworthy foundation.
 
+## Quick start
+
+**Prerequisites:** [Lean 4](https://leanprover.github.io/lean4/doc/setup.html) (v4.28.0+) and [Rust](https://rustup.rs/) (stable).
+
+```sh
+make && make install   # builds and installs to ~/.local/bin
+```
+
+Then try it out:
+
+```sh
+hm lean/examples/basics.hm   # type-check a file
+hm                            # interactive REPL
+make test                     # run the test suite
+```
+
+See [MANUAL.md](MANUAL.md) for networking, DHT, and the full command reference.
+
 ## Further reading
 
 The full technical specification is in the [whitepaper](whitepaper.pdf).
