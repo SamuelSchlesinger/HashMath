@@ -1,0 +1,13 @@
+# HashMath network bootstrap peers.
+#
+# Each entry is a libp2p multiaddr with the peer's public key.
+# These are well-known seed nodes that new nodes connect to on startup.
+#
+# Override at runtime:
+#   hm-net --bootstrap-file /path/to/bootstrap.toml
+#   hm-net --bootstrap /ip4/.../tcp/4256/p2p/...   (single peer)
+#   hm-net --no-default-bootstrap                   (disable all defaults)
+
+peers = [
+  "/ip4/35.207.40.117/tcp/4256/p2p/12D3KooWHKxXAuWMwZik7CcuteTjfAXL8VWehnM4w1B7DYgnCv1v",
+]

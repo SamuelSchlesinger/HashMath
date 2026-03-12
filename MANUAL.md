@@ -96,11 +96,17 @@ Processed 1 file(s) successfully.
 
 ## Networking
 
-HashMath uses a distributed hash table (DHT) to share content-addressed
-declarations across machines. The networking layer consists of:
+HashMath uses a peer-to-peer network to share content-addressed declarations
+across machines. The architecture separates **discovery** from **transfer**
+(like BitTorrent/IPFS):
 
-- **`hm-net`** — A Rust sidecar process running a libp2p Kademlia DHT node
+- **`hm-net`** — A Rust sidecar running a libp2p node with Kademlia (provider
+  discovery) and a direct transfer protocol (content serving)
 - **`hm`** — The Lean CLI, which spawns and communicates with `hm-net` via IPC
+
+The DHT stores only lightweight provider records (~40 bytes) announcing which
+peers have which hashes. Actual content is transferred directly between peers
+via the `/hashmath/transfer/1.0.0` request-response protocol.
 
 ### Configuration
 
@@ -127,22 +133,22 @@ when you exit the REPL.
 
 ### Publishing declarations
 
-Publish all declarations from one or more `.hm` files to the DHT:
+Publish all declarations from one or more `.hm` files to the network:
 
 ```sh
 hm publish basics.hm logic.hm
 ```
 
-This type-checks each file, then for each declaration:
-1. **Shatters** the declaration into subterm fragments — large subterms
-   (>33 bytes serialized) are replaced by hash references (`href` nodes)
-   and stored as separate DHT entries.
-2. **Publishes** each subterm entry to the DHT.
-3. **Publishes** the top-level declaration (now containing `href` pointers
-   instead of repeated subterms) to the DHT.
+This type-checks each file, then:
+1. **Shatters** each declaration into subterm fragments — large subterms
+   (>33 bytes serialized) are replaced by hash references (`href` nodes).
+2. **Batch-publishes** all fragments to the sidecar in a single IPC call.
+   The sidecar stores them locally to disk and returns immediately.
+3. In the background, the sidecar announces provider records to the DHT
+   at a rate-limited 20/sec, so the network learns which peer has which hashes.
 
-The result is global subterm deduplication: shared subterms across all
-declarations in the network are stored exactly once.
+Publishing is fast because no DHT round-trips block the user — content is
+stored locally and provider announcements happen asynchronously.
 
 ### Fetching declarations
 
@@ -152,11 +158,13 @@ Fetch a declaration by its 64-character hex hash:
 hm fetch 5a1fc2...deadbeef
 ```
 
-This recursively resolves all dependencies (including subterm fragments
-referenced by `href` nodes), downloads them from the DHT, reassembles
-full expressions, verifies each hash, type-checks each declaration, and
-reports the results. The format is backward-compatible: declarations
-published before subterm hash-consing was added are fetched correctly.
+The sidecar first checks its local store. If the content isn't local, it
+discovers providers via the DHT (`GET_PROVIDERS`) and transfers the content
+directly from a provider peer. It then recursively resolves all dependencies
+(including subterm fragments referenced by `href` nodes), reassembles full
+expressions, verifies each hash, type-checks each declaration, and reports
+the results. A fallback `GET_RECORD` path provides backward compatibility
+with older nodes that stored full records in the DHT.
 
 ### Checking peers
 
@@ -196,10 +204,28 @@ The `hm-net` binary accepts the following flags:
 
 | Flag | Description |
 |------|-------------|
-| `--listen <multiaddr>` | Listen address (default: `/ip4/0.0.0.0/tcp/4256`) |
+| `--listen <multiaddr>` | Listen address (default: `/ip4/127.0.0.1/tcp/4256`) |
 | `--bootstrap <multiaddr/p2p/peerid>` | Bootstrap peer (repeatable) |
+| `--bootstrap-file <path>` | Path to a `bootstrap.toml` file |
+| `--no-default-bootstrap` | Disable compiled-in and file-based bootstrap peers |
 | `--data-dir <path>` | Data directory for records and keypair |
 | `--ephemeral` | Use a temporary data directory (for testing) |
+| `--public` | Filter to only use public (non-private) addresses |
+| `--headless` | Run without IPC (for seed nodes) |
+| `--no-health` | Disable the HTTP health endpoint |
+| `--health-port <port>` | Health endpoint port (default: 4257) |
+| `--max-records <n>` | Maximum DHT records to store (default: 10000) |
+| `--max-record-size <n>` | Maximum size per record in bytes (default: 1048576) |
+
+### Bootstrap configuration
+
+Bootstrap peers are loaded from (in priority order):
+1. `--bootstrap` CLI flags
+2. `--bootstrap-file` path (or auto-discovered `bootstrap.toml`)
+3. Compiled-in fallback peers
+
+The `bootstrap.toml` file is searched at: explicit path > data directory >
+next to the binary. Use `--no-default-bootstrap` for isolated testing.
 
 ### Data persistence
 
@@ -262,6 +288,7 @@ The IPC protocol uses length-prefixed binary frames over stdin/stdout:
 | `0x52` | Fetch | 32-byte hash |
 | `0x53` | GetPeers | (none) |
 | `0x54` | Shutdown | (none) |
+| `0x55` | PublishBatch | LEB128 count + count × (32-byte hash + LEB128-length-prefixed data) |
 
 ### Response tags (Rust -> Lean)
 
@@ -273,3 +300,4 @@ The IPC protocol uses length-prefixed binary frames over stdin/stdout:
 | `0x63` | NotFound | 32-byte hash |
 | `0x64` | PeerList | LEB128 count + LEB128-prefixed strings |
 | `0x65` | Error | LEB128-prefixed error message |
+| `0x66` | BatchPublished | LEB128 count |

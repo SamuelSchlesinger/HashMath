@@ -14,9 +14,11 @@ libp2p = { version = "0.54", features = [
   "identify",
   "autonat",
   "relay",
+  "request-response",
   "macros",
 ] }
 dirs = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+async-trait = "0.1.89"

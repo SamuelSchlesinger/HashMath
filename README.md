@@ -66,7 +66,8 @@ graph TB
 
     subgraph Rust["Rust Sidecar (hm-net)"]
         IPC["IPC Handler"]
-        Kad["Kademlia DHT"]
+        Kad["Kademlia DHT<br/>(provider discovery)"]
+        Xfer["Direct Transfer<br/>(/hashmath/transfer/1.0.0)"]
         Disk["Disk Persistence"]
     end
 
@@ -88,10 +89,14 @@ graph TB
 
     Shatter <-->|"stdin/stdout IPC"| IPC
     IPC <--> Kad
+    IPC <--> Xfer
     Kad <--> Disk
-    Kad <-->|"libp2p"| Peer1
-    Kad <-->|"libp2p"| Peer2
-    Kad <-->|"libp2p"| Peer3
+    Kad <-->|"discovery"| Peer1
+    Kad <-->|"discovery"| Peer2
+    Kad <-->|"discovery"| Peer3
+    Xfer <-->|"content"| Peer1
+    Xfer <-->|"content"| Peer2
+    Xfer <-->|"content"| Peer3
 
     style Lean fill:#1a1a2e,stroke:#e94560,color:#eee
     style Rust fill:#1a1a2e,stroke:#f5a623,color:#eee
@@ -205,11 +210,22 @@ graph LR
 ## Distributed hash table
 
 HashMath includes a peer-to-peer distribution layer built on a Rust sidecar
-(`hm-net/`) that runs a [libp2p](https://libp2p.io/) Kademlia DHT. The Lean
-`hm` process communicates with the sidecar via stdin/stdout IPC using a
-length-prefixed binary protocol.
+(`hm-net/`) that uses [libp2p](https://libp2p.io/) for networking. The design
+follows the same pattern as BitTorrent and IPFS: **Kademlia for discovery,
+direct transfer for content**.
 
-- **Publish** declarations to the DHT with `hm publish <file.hm>`
+- The DHT stores only lightweight *provider records* (~40 bytes each) that
+  announce "peer X has hash Y"
+- Actual content is served peer-to-peer via a dedicated request-response
+  protocol (`/hashmath/transfer/1.0.0`)
+- Provider announcements are rate-limited (20/sec) and queued in the background,
+  so publishing hundreds of declarations completes instantly via a single batch
+  IPC call
+
+This architecture avoids the throughput bottleneck of storing full records
+(up to 1 MB each) in the DHT, where each `PUT` must replicate to ~20 peers.
+
+- **Publish** declarations with `hm publish <file.hm>`
 - **Fetch** declarations (with recursive dependency resolution) with `hm fetch <hash>`
 - **Discover peers** with `hm peers`
 - **Bulk sync** entire libraries with `.hmm` manifest files
@@ -222,38 +238,36 @@ sequenceDiagram
     participant L as Lean (hm)
     participant R as Rust Sidecar
     participant D as DHT Network
+    participant P as Provider Peer
 
     rect rgb(30, 40, 60)
     note right of U: Publishing
     U->>L: hm publish file.hm
     L->>L: Parse + elaborate + type-check
-    L->>L: Serialize declaration
-    L->>L: Shatter into subterms
-    loop Each subterm fragment
-        L->>R: Publish(hash, bytes)
-        R->>D: PUT record
-        D-->>R: Ok
-        R-->>L: Published
-    end
-    L->>R: Publish(decl_hash, decl_bytes)
-    R->>D: PUT record
-    D-->>R: Ok
-    R-->>L: Published
+    L->>L: Serialize + shatter into subterms
+    L->>R: PublishBatch(all fragments)
+    R->>R: Store locally to disk
+    R-->>L: BatchPublished(count)
     L-->>U: Published <hash>
+    note right of R: Background (rate-limited)
+    loop 20/sec from queue
+        R->>D: START_PROVIDING(hash)
+    end
     end
 
     rect rgb(40, 30, 50)
     note right of U: Fetching
     U->>L: hm fetch <hash>
     L->>R: Fetch(hash)
-    R->>D: GET record
-    D-->>R: Found(bytes)
+    R->>D: GET_PROVIDERS(hash)
+    D-->>R: Provider list
+    R->>P: Transfer request (hash)
+    P-->>R: Content bytes
     R-->>L: Found(bytes)
     L->>L: Deserialize (find href nodes)
     loop Each missing subterm
         L->>R: Fetch(subterm_hash)
-        R->>D: GET record
-        D-->>R: Found(bytes)
+        R->>D: GET_PROVIDERS → direct transfer
         R-->>L: Found(bytes)
     end
     L->>L: Reassemble full expression
@@ -263,11 +277,12 @@ sequenceDiagram
 ```
 
 When publishing, declarations are *shattered* into subterm fragments: large
-subterms are replaced by `href` hash references and published as separate DHT
-entries. When fetching, the process reverses — subterm entries are fetched,
-the full expression is reassembled, and then the hash is verified and the
-declaration is type-checked. This is transparent to the user and backward-
-compatible with non-shattered records.
+subterms are replaced by `href` hash references. All fragments are sent to the
+sidecar in a single batch IPC call, stored locally, and provider announcements
+are queued for background DHT propagation. When fetching, the sidecar discovers
+providers via the DHT, then transfers content directly from peers. The full
+expression is reassembled, hash-verified, and type-checked. A fallback
+`GET_RECORD` path provides backward compatibility with older nodes.
 
 Records are persisted to disk so nodes retain data across restarts. See
 [MANUAL.md](MANUAL.md) for full usage instructions.

@@ -1780,23 +1780,36 @@ which realizes the distribution model described in Section~\ref{sec:distribution
 
 \subsection{Architecture}
 
-The system follows a two-process architecture:
+The system follows a two-process architecture with \emph{separated discovery
+and transfer}, analogous to BitTorrent's Mainline DHT and IPFS's Bitswap:
 \begin{itemize}[nosep]
   \item \textbf{Lean process (\texttt{hm})}: handles parsing, elaboration,
     type checking, hashing, and serialization.
     All trust-critical operations remain in Lean.
   \item \textbf{Rust sidecar (\texttt{hm-net})}: runs a libp2p~\cite{libp2p}
-    Kademlia DHT~\cite{maymounkov2002kademlia} node for peer-to-peer
-    storage and retrieval of content-addressed records.
+    node combining Kademlia DHT~\cite{maymounkov2002kademlia} for
+    \emph{provider discovery} (which peer has hash~$h$?)\ with a dedicated
+    request-response protocol (\texttt{/hashmath/transfer/1.0.0}) for
+    \emph{direct content transfer} between peers.
     The sidecar is entirely untrusted---it transports opaque bytes
     whose integrity is verified by the Lean process upon retrieval.
 \end{itemize}
 
+The key insight is that Kademlia is designed as a lookup-heavy, write-light
+system.
+Storing full records (up to 1~MB) in the DHT requires replicating to
+$\sim$20~peers per write, limiting throughput to $\sim$5--20 completions/sec.
+By storing only lightweight \emph{provider records} ($\sim$40~bytes each)
+in the DHT and serving content directly, the system achieves much higher
+throughput: publishing hundreds of declarations completes in a single batch
+IPC call, with provider announcements propagating asynchronously at a
+rate-limited 20/sec in the background.
+
 The Lean process spawns \texttt{hm-net} as a child process and communicates
 over stdin/stdout using a binary IPC protocol.
-The sidecar's libp2p stack includes Kademlia for record storage, the Identify
-protocol for peer discovery, AutoNAT for NAT status detection, and a Relay
-client for NAT traversal.
+The sidecar's libp2p stack includes Kademlia for provider discovery, the
+Identify protocol for peer metadata exchange, AutoNAT for NAT status detection,
+and a Relay client for NAT traversal.
 
 \subsection{IPC Protocol}
 
@@ -1805,9 +1818,10 @@ Communication uses length-prefixed binary frames:
   \underbrace{4\text{-byte BE length}}_{L} \;\|\; \underbrace{\text{tag byte}}_{1} \;\|\; \underbrace{\text{payload}}_{L - 1}
 \]
 
-Five request types flow from Lean to Rust (tags \texttt{0x50}--\texttt{0x54}:
-Ping, Publish, Fetch, GetPeers, Shutdown) and six response types flow back
-(tags \texttt{0x60}--\texttt{0x65}: Pong, Published, Found, NotFound, PeerList, Error).
+Six request types flow from Lean to Rust (tags \texttt{0x50}--\texttt{0x55}:
+Ping, Publish, Fetch, GetPeers, Shutdown, PublishBatch) and seven response types
+flow back (tags \texttt{0x60}--\texttt{0x66}: Pong, Published, Found, NotFound,
+PeerList, Error, BatchPublished).
 Hash values are transmitted as raw 32-byte SHA-256 digests;
 variable-length fields use LEB128 length prefixes.
 
@@ -1818,15 +1832,23 @@ When the user runs \texttt{hm publish file.hm}, the Lean process type-checks
 all declarations, then \emph{shatters} each declaration
 (Section~\ref{sec:subterm-hashing}): large subterms are replaced by $\hrefE$
 nodes and stored as separate entries.
-For each declaration, the process first publishes all subterm entries (each keyed
-by its content hash), then publishes the top-level declaration in the stored
-wire format (containing $\hrefE$ pointers instead of duplicated subterms).
+All fragments (subterms and top-level declarations) are sent to the sidecar
+in a single \texttt{PublishBatch} IPC call.
 The sidecar stores each record locally (persisted to disk as a file keyed by
-the hex-encoded hash) and replicates to the DHT via Kademlia \texttt{PUT\_RECORD}.
+the hex-encoded hash) and returns immediately.
+In the background, the sidecar announces provider records to the DHT via
+Kademlia \texttt{START\_PROVIDING} at a rate-limited 20 announcements per
+second, so the network gradually learns which peers hold which content.
 
 \paragraph{Fetching.}
 When the user runs \texttt{hm fetch <hash>}, the sidecar first checks its
-local file store, then queries the DHT via Kademlia \texttt{GET\_RECORD}.
+local file store.
+If the content is not local, it queries the DHT via \texttt{GET\_PROVIDERS}
+to discover which peers hold the requested hash, then transfers the content
+directly from a provider using the \texttt{/hashmath/transfer/1.0.0}
+request-response protocol.
+A fallback \texttt{GET\_RECORD} path provides backward compatibility with
+older nodes that stored full records in the DHT.
 The Lean process inspects the returned bytes for $\hrefE$ nodes (tag \texttt{0x19}),
 fetches each referenced subterm, builds a \textsf{SubtermStore}, and
 \emph{reassembles} the full declaration.
@@ -1874,10 +1896,16 @@ elimination, and error rejection.
 
 \paragraph{Phase 2: Distribution Prototype \textnormal{(complete)}.}
 A working peer-to-peer distribution layer is implemented using a Rust sidecar
-with libp2p Kademlia (Section~\ref{sec:prototype}).
+with libp2p (Section~\ref{sec:prototype}).
+The architecture separates discovery (Kademlia provider records) from content
+transfer (direct peer-to-peer \texttt{/hashmath/transfer/1.0.0} protocol),
+following the same pattern as BitTorrent and IPFS.
+Batch IPC and background rate-limited provider announcements enable
+high-throughput publishing.
 The CLI supports publishing, fetching with recursive dependency resolution,
 peer discovery, and manifest-based bulk sync.
-Persistent file-backed storage and NAT traversal support are included.
+Persistent file-backed storage, externalized bootstrap configuration, and
+NAT traversal support are included.
 Subterm-level hash-consing (Section~\ref{sec:subterm-hashing}) provides
 global deduplication: declarations are shattered into subterm fragments
 before publishing, enabling shared subterms across the entire network to be

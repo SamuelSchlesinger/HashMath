@@ -11,27 +11,30 @@ namespace HashMath.Net
 
 -- Request tags (Lean → Rust)
 namespace ReqTag
-  def ping     : UInt8 := 0x50
-  def publish  : UInt8 := 0x51
-  def fetch    : UInt8 := 0x52
-  def getPeers : UInt8 := 0x53
-  def shutdown : UInt8 := 0x54
+  def ping         : UInt8 := 0x50
+  def publish      : UInt8 := 0x51
+  def fetch        : UInt8 := 0x52
+  def getPeers     : UInt8 := 0x53
+  def shutdown     : UInt8 := 0x54
+  def publishBatch : UInt8 := 0x55
 end ReqTag
 
 -- Response tags (Rust → Lean)
 namespace RespTag
-  def pong     : UInt8 := 0x60
-  def published: UInt8 := 0x61
-  def found    : UInt8 := 0x62
-  def notFound : UInt8 := 0x63
-  def peerList : UInt8 := 0x64
-  def error    : UInt8 := 0x65
+  def pong           : UInt8 := 0x60
+  def published      : UInt8 := 0x61
+  def found          : UInt8 := 0x62
+  def notFound       : UInt8 := 0x63
+  def peerList       : UInt8 := 0x64
+  def error          : UInt8 := 0x65
+  def batchPublished : UInt8 := 0x66
 end RespTag
 
 /-- A request from Lean to the Rust sidecar. -/
 inductive Request where
   | ping
   | publish (hash : Hash) (declBytes : ByteArray)
+  | publishBatch (records : Array (Hash × ByteArray))
   | fetch (hash : Hash)
   | getPeers
   | shutdown
@@ -40,6 +43,7 @@ inductive Request where
 inductive Response where
   | pong
   | published (hash : Hash)
+  | batchPublished (count : Nat)
   | found (hash : Hash) (declBytes : ByteArray)
   | notFound (hash : Hash)
   | peerList (peers : List String)
@@ -76,6 +80,10 @@ def serializeRequest : Request → ByteArray
   | .ping => serByte ReqTag.ping
   | .publish hash declBytes =>
     serByte ReqTag.publish ++ serHash hash ++ serNat declBytes.size ++ declBytes
+  | .publishBatch records =>
+    let header := serByte ReqTag.publishBatch ++ serNat records.size
+    records.foldl (fun buf (hash, declBytes) =>
+      buf ++ serHash hash ++ serNat declBytes.size ++ declBytes) header
   | .fetch hash =>
     serByte ReqTag.fetch ++ serHash hash
   | .getPeers => serByte ReqTag.getPeers
@@ -86,6 +94,8 @@ def serializeResponse : Response → ByteArray
   | .pong => serByte RespTag.pong
   | .published hash =>
     serByte RespTag.published ++ serHash hash
+  | .batchPublished count =>
+    serByte RespTag.batchPublished ++ serNat count
   | .found hash declBytes =>
     serByte RespTag.found ++ serHash hash ++ serNat declBytes.size ++ declBytes
   | .notFound hash =>
@@ -154,6 +164,9 @@ def deserializeResponse (payload : ByteArray) : Option Response := do
   else if tag == RespTag.published then do
     let (hash, _) ← c.readHash
     some (.published hash)
+  else if tag == RespTag.batchPublished then do
+    let (count, _) ← c.readNat
+    some (.batchPublished count)
   else if tag == RespTag.found then do
     let (hash, c) ← c.readHash
     let (len, c) ← c.readNat

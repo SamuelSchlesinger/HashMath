@@ -6,6 +6,7 @@
 //! Persistent file-backed record store for Kademlia.
 //!
 //! Each record is stored as a file: `<data_dir>/records/<hex-key>`.
+//! Provider records are kept in memory (they're small and transient).
 //! The keypair is persisted at `<data_dir>/keypair`.
 
 use anyhow::{Context, Result};
@@ -18,6 +19,7 @@ use libp2p::{
     PeerId,
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -35,11 +37,16 @@ fn set_permissions(path: &Path, mode: u32) {
 }
 
 /// A Kademlia record store backed by the filesystem.
+/// Content records are persisted to disk. Provider records are kept in memory.
 pub struct FileStore {
     data_dir: PathBuf,
     local_peer_id: PeerId,
     max_records: usize,
     max_record_size: usize,
+    /// Provider records: key → list of providers. Kept in memory (small, transient).
+    provider_records: HashMap<Vec<u8>, Vec<ProviderRecord>>,
+    /// Records this node is providing (announced via start_providing).
+    provided_records: Vec<ProviderRecord>,
 }
 
 impl FileStore {
@@ -52,6 +59,8 @@ impl FileStore {
             local_peer_id,
             max_records: 10_000,
             max_record_size: 1_048_576, // 1 MB per record
+            provider_records: HashMap::new(),
+            provided_records: Vec::new(),
         })
     }
 
@@ -129,20 +138,44 @@ impl RecordStore for FileStore {
         records.into_iter()
     }
 
-    fn add_provider(&mut self, _record: ProviderRecord) -> std::result::Result<(), Error> {
-        // Provider records not used for our DHT
+    fn add_provider(&mut self, record: ProviderRecord) -> std::result::Result<(), Error> {
+        let key = record.key.as_ref().to_vec();
+        // Track if this is our own provider record
+        if record.provider == self.local_peer_id {
+            if !self.provided_records.iter().any(|r| r.key == record.key) {
+                self.provided_records.push(record.clone());
+            }
+        }
+        let providers = self.provider_records.entry(key).or_default();
+        // Don't add duplicate providers
+        if !providers.iter().any(|r| r.provider == record.provider) {
+            providers.push(record);
+        }
         Ok(())
     }
 
-    fn providers(&self, _key: &RecordKey) -> Vec<ProviderRecord> {
-        Vec::new()
+    fn providers(&self, key: &RecordKey) -> Vec<ProviderRecord> {
+        self.provider_records
+            .get(key.as_ref())
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn provided(&self) -> Self::ProvidedIter<'_> {
-        Vec::new().into_iter()
+        self.provided_records
+            .iter()
+            .map(|r| Cow::Owned(r.clone()))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
-    fn remove_provider(&mut self, _key: &RecordKey, _provider: &PeerId) {}
+    fn remove_provider(&mut self, key: &RecordKey, provider: &PeerId) {
+        if let Some(providers) = self.provider_records.get_mut(key.as_ref()) {
+            providers.retain(|r| &r.provider != provider);
+        }
+        self.provided_records
+            .retain(|r| !(&r.key == key && &r.provider == provider));
+    }
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
