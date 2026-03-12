@@ -903,6 +903,7 @@ name = "hm-net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "dirs",
  "libp2p",
  "tokio",
@@ -1220,6 +1221,7 @@ dependencies = [
  "libp2p-noise",
  "libp2p-quic",
  "libp2p-relay",
+ "libp2p-request-response",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-upnp",

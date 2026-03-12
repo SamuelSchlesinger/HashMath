@@ -13,6 +13,7 @@ pub mod req_tag {
     pub const FETCH: u8 = 0x52;
     pub const GET_PEERS: u8 = 0x53;
     pub const SHUTDOWN: u8 = 0x54;
+    pub const PUBLISH_BATCH: u8 = 0x55;
 }
 
 // Response tags (Rust → Lean)
@@ -23,6 +24,7 @@ pub mod resp_tag {
     pub const NOT_FOUND: u8 = 0x63;
     pub const PEER_LIST: u8 = 0x64;
     pub const ERROR: u8 = 0x65;
+    pub const BATCH_PUBLISHED: u8 = 0x66;
 }
 
 /// A 32-byte SHA-256 hash, matching HashMath.Hash.
@@ -33,6 +35,7 @@ pub type Hash = [u8; 32];
 pub enum Request {
     Ping,
     Publish { hash: Hash, decl_bytes: Vec<u8> },
+    PublishBatch { records: Vec<(Hash, Vec<u8>)> },
     Fetch { hash: Hash },
     GetPeers,
     Shutdown,
@@ -43,6 +46,7 @@ pub enum Request {
 pub enum Response {
     Pong,
     Published { hash: Hash },
+    BatchPublished { count: usize },
     Found { hash: Hash, decl_bytes: Vec<u8> },
     NotFound { hash: Hash },
     PeerList { peers: Vec<String> },
@@ -160,6 +164,11 @@ impl Response {
                 buf.extend_from_slice(hash);
                 buf
             }
+            Response::BatchPublished { count } => {
+                let mut buf = vec![resp_tag::BATCH_PUBLISHED];
+                buf.extend_from_slice(&encode_leb128(*count));
+                buf
+            }
             Response::Found { hash, decl_bytes } => {
                 let mut buf = vec![resp_tag::FOUND];
                 buf.extend_from_slice(hash);
@@ -206,6 +215,17 @@ impl Request {
                 let hash = c.read_hash()?;
                 Ok(Request::Fetch { hash })
             }
+            req_tag::PUBLISH_BATCH => {
+                let count = c.read_nat()?;
+                let mut records = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let hash = c.read_hash()?;
+                    let len = c.read_nat()?;
+                    let decl_bytes = c.read_bytes(len)?;
+                    records.push((hash, decl_bytes));
+                }
+                Ok(Request::PublishBatch { records })
+            }
             req_tag::GET_PEERS => Ok(Request::GetPeers),
             req_tag::SHUTDOWN => Ok(Request::Shutdown),
             _ => bail!("unknown request tag: 0x{:02x}", tag),
@@ -223,7 +243,7 @@ pub async fn recv_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8
         .await
         .context("reading IPC frame length")?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 2 * 1024 * 1024 {
+    if len > 8 * 1024 * 1024 {
         bail!("IPC frame too large: {} bytes", len);
     }
     let mut payload = vec![0u8; len];
@@ -282,11 +302,15 @@ mod tests {
     #[test]
     fn test_request_roundtrip() {
         let hash = [42u8; 32];
+        let hash2 = [99u8; 32];
         let cases = vec![
             Request::Ping,
             Request::Publish {
                 hash,
                 decl_bytes: vec![1, 2, 3, 4],
+            },
+            Request::PublishBatch {
+                records: vec![(hash, vec![1, 2]), (hash2, vec![3, 4, 5])],
             },
             Request::Fetch { hash },
             Request::GetPeers,
@@ -300,6 +324,16 @@ mod tests {
                     buf.extend_from_slice(hash);
                     buf.extend_from_slice(&encode_leb128(decl_bytes.len()));
                     buf.extend_from_slice(decl_bytes);
+                    buf
+                }
+                Request::PublishBatch { records } => {
+                    let mut buf = vec![req_tag::PUBLISH_BATCH];
+                    buf.extend_from_slice(&encode_leb128(records.len()));
+                    for (h, bytes) in records {
+                        buf.extend_from_slice(h);
+                        buf.extend_from_slice(&encode_leb128(bytes.len()));
+                        buf.extend_from_slice(bytes);
+                    }
                     buf
                 }
                 Request::Fetch { hash } => {

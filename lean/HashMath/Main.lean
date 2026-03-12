@@ -159,36 +159,39 @@ partial def fetchWithDeps (handle : SidecarHandle) (env : Environment) (hash : H
 /-- Publish all declarations from a codebase to the DHT.
     Uses subterm hash-consing: large subexpressions are published separately
     as content-addressed entries, and the declaration is stored in shattered
-    form with href references to the subterms. -/
+    form with href references to the subterms.
+    Sends all records in a single batch IPC call for efficiency. -/
 def publishCodebase (handle : SidecarHandle) (cb : Codebase) : IO Nat := do
-  let mut count := 0
+  -- Collect all records (subterms + declarations) into a single batch
+  let mut allRecords : Array (Hash × ByteArray) := #[]
+  let mut declCount := 0
   let mut subtermCount := 0
+  let mut names : Array String := #[]
   for (name, hash) in cb.names.toList do
     match cb.env.lookup hash with
     | some di =>
-      -- Shatter the declaration: produces stored-format bytes + subterm store
       let (storedBytes, store) := shatterDecl di.decl
-      -- Publish each subterm first
+      -- Add subterms first
       for (subHash, subBytes) in store.toList do
-        let resp ← handle.publish subHash subBytes
-        match resp with
-        | .published _ => subtermCount := subtermCount + 1
-        | _ => pure ()
-      -- Publish the stored-format declaration
-      let resp ← handle.publish hash storedBytes
-      match resp with
-      | .published _ =>
-        let storeInfo := if store.isEmpty then "" else s!" ({store.size} subterms)"
-        IO.println s!"  published {name} ({hashToHex hash}){storeInfo}"
-        count := count + 1
-      | .error msg =>
-        IO.eprintln s!"  error publishing {name}: {msg}"
-      | _ =>
-        IO.eprintln s!"  unexpected response for {name}"
-    | none => pure ()  -- skip derived entities (ctors, recs) that don't have direct decls
+        allRecords := allRecords.push (subHash, subBytes)
+        subtermCount := subtermCount + 1
+      -- Add the declaration
+      allRecords := allRecords.push (hash, storedBytes)
+      declCount := declCount + 1
+      let storeInfo := if store.isEmpty then "" else s!" ({store.size} subterms)"
+      names := names.push s!"  {name} ({hashToHex hash}){storeInfo}"
+    | none => pure ()
+  -- Single batch IPC call
+  if allRecords.isEmpty then
+    return 0
+  let stored ← handle.publishBatch allRecords
+  -- Print results
+  for n in names do
+    IO.println n
   if subtermCount > 0 then
-    IO.println s!"  ({subtermCount} shared subterms published)"
-  return count
+    IO.println s!"  ({subtermCount} shared subterms included)"
+  IO.println s!"  batch published {stored}/{allRecords.size} records"
+  return declCount
 
 /-- Generate a manifest string from a codebase: one "name hexhash" per line. -/
 def generateManifest (cb : Codebase) : String :=
@@ -280,10 +283,10 @@ def main (args : List String) : IO Unit := do
 
   | ["mcp"] => MCP.mcpServer
 
-  | ["--test-ipc"] => do
+  | ["--test-ipc"] | ["--test-ipc", "--no-default-bootstrap"] => do
     let hmNet ← findHmNet
     IO.println "IPC integration test: spawning hm-net sidecar..."
-    let handle ← SidecarHandle.spawn hmNet #["--ephemeral"]
+    let handle ← SidecarHandle.spawn hmNet #["--ephemeral", "--no-default-bootstrap", "--no-health"]
     IO.println "  Sending ping..."
     let ok ← handle.ping
     if ok then
@@ -299,7 +302,7 @@ def main (args : List String) : IO Unit := do
   | ["serve"] => do
     let hmNet ← findHmNet
     IO.println "Starting hm-net sidecar..."
-    let handle ← SidecarHandle.spawn hmNet
+    let handle ← SidecarHandle.spawn hmNet #["--listen", "/ip4/0.0.0.0/tcp/4256"]
     let ok ← handle.ping
     if ok then
       IO.println "Sidecar is running. Entering REPL with network support."

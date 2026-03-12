@@ -47,6 +47,15 @@ def ping (h : SidecarHandle) : IO Bool := do
 def publish (h : SidecarHandle) (hash : Hash) (declBytes : ByteArray) : IO Response :=
   h.request (.publish hash declBytes)
 
+/-- Publish a batch of records in a single IPC call.
+    Returns the number of records successfully stored. -/
+def publishBatch (h : SidecarHandle) (records : Array (Hash × ByteArray)) : IO Nat := do
+  let resp ← h.request (.publishBatch records)
+  match resp with
+  | .batchPublished count => return count
+  | .error msg => throw (IO.Error.userError s!"batch publish failed: {msg}")
+  | _ => throw (IO.Error.userError "unexpected response to publishBatch")
+
 /-- Fetch a declaration by hash from the DHT. -/
 def fetch (h : SidecarHandle) (hash : Hash) : IO Response :=
   h.request (.fetch hash)

@@ -48,10 +48,9 @@ echo ""
 # ─── Test 2: Two-node publish & fetch ────────────────────────────
 echo "=== Test 2: Two-node DHT propagation ==="
 
-# Start node A on port 4260
-# Redirect stderr to a file so we can parse the peer ID
+# Start node A on port 4260 (local only, no default bootstrap)
 echo "Starting node A (port 4260)..."
-"$HM_NET" --ephemeral --listen /ip4/127.0.0.1/tcp/4260 < "$FIFO_A_IN" > "$TMPDIR/a_out" 2>"$TMPDIR/a_err" &
+"$HM_NET" --ephemeral --no-default-bootstrap --no-health --listen /ip4/127.0.0.1/tcp/4260 < "$FIFO_A_IN" > "$TMPDIR/a_out" 2>"$TMPDIR/a_err" &
 NODE_A_PID=$!
 
 # Keep the fifo open for writing (otherwise node A gets EOF immediately)
@@ -75,7 +74,7 @@ echo "  Node A peer ID: $PEER_ID_A"
 
 # Start node B on port 4261, bootstrapped from node A
 echo "Starting node B (port 4261, bootstrap from A)..."
-"$HM_NET" --ephemeral --listen /ip4/127.0.0.1/tcp/4261 \
+"$HM_NET" --ephemeral --no-default-bootstrap --no-health --listen /ip4/127.0.0.1/tcp/4261 \
   --bootstrap "/ip4/127.0.0.1/tcp/4260/p2p/$PEER_ID_A" \
   < "$FIFO_B_IN" > "$TMPDIR/b_out" 2>"$TMPDIR/b_err" &
 NODE_B_PID=$!
