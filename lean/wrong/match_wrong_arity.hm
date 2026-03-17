@@ -1,0 +1,9 @@
+-- Match arm with wrong number of pattern variables (should be rejected)
+import "../stdlib/Nat.hm"
+
+def test : Nat → Nat :=
+  fun (n : Nat) =>
+    match n : Nat return Nat {
+      | Nat.zero => Nat.zero
+      | Nat.succ a b c => a
+    }

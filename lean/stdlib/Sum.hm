@@ -14,26 +14,23 @@ def Sum.elim : ∀ (A : Type) (B : Type) (C : Type),
     Sum A B → (A → C) → (B → C) → C :=
   fun (A : Type) (B : Type) (C : Type)
       (s : Sum A B) (f : A → C) (g : B → C) =>
-    Sum.rec.{1} A B
-      (fun (_ : Sum A B) => C)
-      (fun (a : A) => f a)
-      (fun (b : B) => g b)
-      s
+    match s : Sum A B return C {
+      | Sum.inl a => f a
+      | Sum.inr b => g b
+    }
 
 def Sum.map : ∀ (A : Type) (B : Type) (C : Type) (D : Type),
     (A → C) → (B → D) → Sum A B → Sum C D :=
   fun (A : Type) (B : Type) (C : Type) (D : Type)
       (f : A → C) (g : B → D) (s : Sum A B) =>
-    Sum.rec.{1} A B
-      (fun (_ : Sum A B) => Sum C D)
-      (fun (a : A) => Sum.inl C D (f a))
-      (fun (b : B) => Sum.inr C D (g b))
-      s
+    match s : Sum A B return Sum C D {
+      | Sum.inl a => Sum.inl C D (f a)
+      | Sum.inr b => Sum.inr C D (g b)
+    }
 
 def Sum.swap : ∀ (A : Type) (B : Type), Sum A B → Sum B A :=
   fun (A : Type) (B : Type) (s : Sum A B) =>
-    Sum.rec.{1} A B
-      (fun (_ : Sum A B) => Sum B A)
-      (fun (a : A) => Sum.inr B A a)
-      (fun (b : B) => Sum.inl B A b)
-      s
+    match s : Sum A B return Sum B A {
+      | Sum.inl a => Sum.inr B A a
+      | Sum.inr b => Sum.inl B A b
+    }

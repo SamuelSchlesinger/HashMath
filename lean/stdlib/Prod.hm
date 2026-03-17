@@ -17,30 +17,26 @@ inductive Prod (A : Type) (B : Type) : Type where
 
 def Prod.fst : ∀ (A : Type) (B : Type), Prod A B → A :=
   fun (A : Type) (B : Type) (p : Prod A B) =>
-    Prod.rec.{1} A B
-      (fun (_ : Prod A B) => A)
-      (fun (a : A) (_ : B) => a)
-      p
+    match p : Prod A B return A {
+      | Prod.mk a _ => a
+    }
 
 def Prod.snd : ∀ (A : Type) (B : Type), Prod A B → B :=
   fun (A : Type) (B : Type) (p : Prod A B) =>
-    Prod.rec.{1} A B
-      (fun (_ : Prod A B) => B)
-      (fun (_ : A) (b : B) => b)
-      p
+    match p : Prod A B return B {
+      | Prod.mk _ b => b
+    }
 
 def Prod.map : ∀ (A : Type) (B : Type) (C : Type) (D : Type),
     (A → C) → (B → D) → Prod A B → Prod C D :=
   fun (A : Type) (B : Type) (C : Type) (D : Type)
       (f : A → C) (g : B → D) (p : Prod A B) =>
-    Prod.rec.{1} A B
-      (fun (_ : Prod A B) => Prod C D)
-      (fun (a : A) (b : B) => Prod.mk C D (f a) (g b))
-      p
+    match p : Prod A B return Prod C D {
+      | Prod.mk a b => Prod.mk C D (f a) (g b)
+    }
 
 def Prod.swap : ∀ (A : Type) (B : Type), Prod A B → Prod B A :=
   fun (A : Type) (B : Type) (p : Prod A B) =>
-    Prod.rec.{1} A B
-      (fun (_ : Prod A B) => Prod B A)
-      (fun (a : A) (b : B) => Prod.mk B A b a)
-      p
+    match p : Prod A B return Prod B A {
+      | Prod.mk a b => Prod.mk B A b a
+    }

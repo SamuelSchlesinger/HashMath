@@ -33,7 +33,7 @@ def fail (msg : String) : P α := fun _s => .error msg
 
 def peek : P (Option Char) := fun s =>
   if s.pos < strEndPos s.input then
-    .ok (some (s.input.get s.pos), s)
+    .ok (some (String.Pos.Raw.get s.input s.pos), s)
   else
     .ok (none, s)
 
@@ -42,8 +42,8 @@ def atEnd : P Bool := fun s =>
 
 def next : P Char := fun s =>
   if s.pos < strEndPos s.input then
-    let c := s.input.get s.pos
-    .ok (c, ⟨s.input, s.input.next s.pos⟩)
+    let c := String.Pos.Raw.get s.input s.pos
+    .ok (c, ⟨s.input, String.Pos.Raw.next s.input s.pos⟩)
   else
     .error "unexpected end of input"
 
@@ -61,20 +61,20 @@ instance : Monad P where
 private partial def skipWs (input : String) (pos : String.Pos.Raw) : String.Pos.Raw :=
   if pos >= strEndPos input then pos
   else
-    let c := input.get pos
+    let c := String.Pos.Raw.get input pos
     if c == ' ' || c == '\n' || c == '\r' || c == '\t' then
-      skipWs input (input.next pos)
+      skipWs input (String.Pos.Raw.next input pos)
     else if c == '-' then
-      let pos2 := input.next pos
-      if pos2 < strEndPos input && input.get pos2 == '-' then
-        skipComment input (input.next pos2)
+      let pos2 := String.Pos.Raw.next input pos
+      if pos2 < strEndPos input && String.Pos.Raw.get input pos2 == '-' then
+        skipComment input (String.Pos.Raw.next input pos2)
       else pos
     else pos
 where
   skipComment (input : String) (pos : String.Pos.Raw) : String.Pos.Raw :=
     if pos >= strEndPos input then pos
-    else if input.get pos == '\n' then skipWs input (input.next pos)
-    else skipComment input (input.next pos)
+    else if String.Pos.Raw.get input pos == '\n' then skipWs input (String.Pos.Raw.next input pos)
+    else skipComment input (String.Pos.Raw.next input pos)
 
 private def ws : P Unit := fun s =>
   .ok ((), ⟨s.input, skipWs s.input s.pos⟩)
@@ -88,8 +88,8 @@ private def isIdentStart (c : Char) : Bool :=
 private def checkChars : List Char → String → String.Pos.Raw → Option String.Pos.Raw
   | [], _, pos => some pos
   | c :: cs, input, pos =>
-    if pos < strEndPos input && input.get pos == c then
-      checkChars cs input (input.next pos)
+    if pos < strEndPos input && String.Pos.Raw.get input pos == c then
+      checkChars cs input (String.Pos.Raw.next input pos)
     else none
 
 private def keyword (kw : String) : P Unit := fun s =>
@@ -97,7 +97,7 @@ private def keyword (kw : String) : P Unit := fun s =>
   match checkChars kw.toList s.input pos with
   | none => .error s!"expected '{kw}'"
   | some pos' =>
-    if pos' < strEndPos s.input && isIdentChar (s.input.get pos') then
+    if pos' < strEndPos s.input && isIdentChar (String.Pos.Raw.get s.input pos') then
       .error s!"expected '{kw}'"
     else
       .ok ((), ⟨s.input, pos'⟩)
@@ -109,37 +109,37 @@ private def symbol (sym : String) : P Unit := fun s =>
   | some pos' => .ok ((), ⟨s.input, pos'⟩)
 
 private partial def collectIdent (input : String) (pos : String.Pos.Raw) (acc : List Char) : String × String.Pos.Raw :=
-  if pos >= strEndPos input then (String.mk acc.reverse, pos)
+  if pos >= strEndPos input then (String.ofList acc.reverse, pos)
   else
-    let c := input.get pos
-    if isIdentChar c then collectIdent input (input.next pos) (c :: acc)
-    else (String.mk acc.reverse, pos)
+    let c := String.Pos.Raw.get input pos
+    if isIdentChar c then collectIdent input (String.Pos.Raw.next input pos) (c :: acc)
+    else (String.ofList acc.reverse, pos)
 
 private def ident : P String := fun s =>
   let pos := skipWs s.input s.pos
   if pos >= strEndPos s.input then .error "expected identifier"
   else
-    let c := s.input.get pos
+    let c := String.Pos.Raw.get s.input pos
     if !isIdentStart c then .error s!"expected identifier, got '{c}'"
     else
-      let (name, pos') := collectIdent s.input (s.input.next pos) [c]
+      let (name, pos') := collectIdent s.input (String.Pos.Raw.next s.input pos) [c]
       .ok (name, ⟨s.input, pos'⟩)
 
 private partial def collectDigits (input : String) (pos : String.Pos.Raw) (acc : Nat) : Nat × String.Pos.Raw :=
   if pos >= strEndPos input then (acc, pos)
   else
-    let c := input.get pos
-    if c.isDigit then collectDigits input (input.next pos) (acc * 10 + c.toNat - '0'.toNat)
+    let c := String.Pos.Raw.get input pos
+    if c.isDigit then collectDigits input (String.Pos.Raw.next input pos) (acc * 10 + c.toNat - '0'.toNat)
     else (acc, pos)
 
 private def natLit : P Nat := fun s =>
   let pos := skipWs s.input s.pos
   if pos >= strEndPos s.input then .error "expected number"
   else
-    let c := s.input.get pos
+    let c := String.Pos.Raw.get s.input pos
     if !c.isDigit then .error s!"expected number, got '{c}'"
     else
-      let (n, pos') := collectDigits s.input (s.input.next pos) (c.toNat - '0'.toNat)
+      let (n, pos') := collectDigits s.input (String.Pos.Raw.next s.input pos) (c.toNat - '0'.toNat)
       .ok (n, ⟨s.input, pos'⟩)
 
 private partial def many (p : P α) : P (List α) := fun s =>
@@ -166,7 +166,7 @@ private partial def sepBy (p : P α) (sep : P Unit) : P (List α) := fun s =>
 
 private def reservedWords : List String :=
   ["fun", "Sort", "Prop", "Type", "let", "in", "axiom", "def", "inductive",
-   "where", "mutual", "end", "variable", "import"]
+   "where", "mutual", "end", "variable", "import", "match", "return"]
 
 private def identNonReserved : P String :=
   P.bind ident fun name =>
@@ -180,9 +180,9 @@ private def identNonReserved : P String :=
 private def checkTrailingDotBrace (name : String) : P (String × Bool) := fun s =>
   if name.endsWith "." then
     let pos := skipWs s.input s.pos
-    if pos < strEndPos s.input && s.input.get pos == '{' then
-      let trimmed := name.dropRight 1
-      .ok ((trimmed, true), ⟨s.input, s.input.next pos⟩)
+    if pos < strEndPos s.input && String.Pos.Raw.get s.input pos == '{' then
+      let trimmed := (name.dropEnd 1).toString
+      .ok ((trimmed, true), ⟨s.input, String.Pos.Raw.next s.input pos⟩)
     else
       .ok ((name, false), s)
   else
@@ -192,16 +192,16 @@ private partial def collectStringChars (input : String) (pos : String.Pos.Raw) (
     : Except String (String × String.Pos.Raw) :=
   if pos >= strEndPos input then .error "unterminated string literal"
   else
-    let c := input.get pos
-    if c == '"' then .ok (String.mk acc.reverse, input.next pos)
-    else collectStringChars input (input.next pos) (c :: acc)
+    let c := String.Pos.Raw.get input pos
+    if c == '"' then .ok (String.ofList acc.reverse, String.Pos.Raw.next input pos)
+    else collectStringChars input (String.Pos.Raw.next input pos) (c :: acc)
 
 private def stringLit : P String := fun s =>
   let pos := skipWs s.input s.pos
-  if pos >= strEndPos s.input || s.input.get pos != '"' then
+  if pos >= strEndPos s.input || String.Pos.Raw.get s.input pos != '"' then
     .error "expected string literal"
   else
-    match collectStringChars s.input (s.input.next pos) [] with
+    match collectStringChars s.input (String.Pos.Raw.next s.input pos) [] with
     | .ok (str, pos') => .ok (str, ⟨s.input, pos'⟩)
     | .error e => .error e
 
@@ -307,6 +307,10 @@ private partial def parseBinder : P (List (String × SExpr)) := do
 
 private partial def parseExpr : P SExpr := do
   let () ← ws
+  let match_? ← P.tryP (keyword "match")
+  match match_? with
+  | some () => parseMatch
+  | none =>
   let lam? ← P.tryP (keyword "fun")
   match lam? with
   | some () => parseLambda
@@ -351,6 +355,33 @@ private partial def parseLetE : P SExpr := do
   let () ← keyword "in"
   let body ← parseExpr
   return .letE name ty val body
+
+private partial def parseMatchArm : P (String × List String × SExpr) := do
+  let () ← symbol "|"
+  let ctorName ← ident
+  let vars ← many identNonReserved
+  let () ← symbol "=>"
+  let body ← parseExpr
+  return (ctorName, vars, body)
+
+private partial def parseMatch : P SExpr := do
+  let univs ← parseExprUnivArgs
+  let scrut ← parseAtom
+  let asResult ← P.tryP (keyword "as")
+  let asVars ← match asResult with
+    | some () => many1 identNonReserved
+    | none => P.pure []
+  let () ← symbol ":"
+  let typeE ← parseAppExpr
+  let () ← keyword "return"
+  let retE ← parseExpr
+  let () ← symbol "{"
+  let arms ← many parseMatchArm
+  let () ← symbol "}"
+  let ctors := arms.map (fun (c, _, _) => c)
+  let varss := arms.map (fun (_, v, _) => v)
+  let bodies := arms.map (fun (_, _, b) => b)
+  return .match_ univs scrut asVars typeE retE ctors varss bodies
 
 end -- mutual
 

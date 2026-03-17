@@ -238,45 +238,50 @@ where
 
 mutual
 
-/-- Weak head normal form (core reductions: β, ζ, ι, proj, quotient — not δ). -/
-partial def whnfCore (env : Environment) (e : Expr) : Expr :=
-  match e with
+/-- Weak head normal form (core reductions: β, ζ, ι, proj, quotient — not δ).
+    `fuel` bounds the total number of reduction steps to prevent infinite loops. -/
+partial def whnfCore (env : Environment) (e : Expr) (fuel : Nat := 10000) : Expr :=
+  if fuel == 0 then e
+  else match e with
   | .app fn arg =>
-    let fn' := whnfCore env fn
+    let fn' := whnfCore env fn (fuel - 1)
     match fn' with
-    | .lam _ty body => whnfCore env (betaReduce body arg)
+    | .lam _ty body => whnfCore env (betaReduce body arg) (fuel - 1)
     | _ =>
       let e' := if fn' == fn then e else .app fn' arg
       -- Try quotient and ι-reduction (use whnf to δ-reduce scrutinees)
-      match trySpecialReduce env e' whnf with
-      | some result => whnfCore env result
+      match trySpecialReduce env e' (fun env e => whnf env e (fuel - 1)) with
+      | some result => whnfCore env result (fuel - 1)
       | none => e'
-  | .letE _ty val body => whnfCore env (zetaReduce val body)
+  | .letE _ty val body => whnfCore env (zetaReduce val body) (fuel - 1)
   | .proj typeName idx struct =>
-    let struct' := whnf env struct
+    let struct' := whnf env struct (fuel - 1)
     match projReduce env typeName idx struct' with
-    | some result => whnfCore env result
+    | some result => whnfCore env result (fuel - 1)
     | none => .proj typeName idx struct'
   | _ => e
 
-/-- Weak head normal form (including δ-reduction — all defs are transparent). -/
-partial def whnf (env : Environment) (e : Expr) : Expr :=
-  let e' := whnfCore env e
-  match e' with
-  | .const h univs =>
-    match env.getDeclValue h univs with
-    | some val => whnf env val
-    | none => e'
-  | .app _fn _arg =>
-    -- Try unfolding the head constant
-    let (hd, allArgs) := e'.getAppFnArgs
-    match hd with
+/-- Weak head normal form (including δ-reduction — all defs are transparent).
+    `fuel` bounds the total number of reduction steps to prevent infinite loops. -/
+partial def whnf (env : Environment) (e : Expr) (fuel : Nat := 10000) : Expr :=
+  if fuel == 0 then e
+  else
+    let e' := whnfCore env e (fuel - 1)
+    match e' with
     | .const h univs =>
       match env.getDeclValue h univs with
-      | some val => whnf env (Expr.mkAppN val allArgs)
+      | some val => whnf env val (fuel - 1)
       | none => e'
+    | .app _fn _arg =>
+      -- Try unfolding the head constant
+      let (hd, allArgs) := e'.getAppFnArgs
+      match hd with
+      | .const h univs =>
+        match env.getDeclValue h univs with
+        | some val => whnf env (Expr.mkAppN val allArgs) (fuel - 1)
+        | none => e'
+      | _ => e'
     | _ => e'
-  | _ => e'
 
 end
 

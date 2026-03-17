@@ -71,8 +71,8 @@ private def escapeChar (c : Char) : String :=
   else if c.toNat < 0x20 then
     let n := c.toNat
     let hex := "0123456789abcdef"
-    let hi := hex.get ⟨n / 16⟩
-    let lo := hex.get ⟨n % 16⟩
+    let hi := String.Pos.Raw.get hex ⟨n / 16⟩
+    let lo := String.Pos.Raw.get hex ⟨n % 16⟩
     "\\u00" ++ hi.toString ++ lo.toString
   else
     c.toString
@@ -112,11 +112,11 @@ private def jpAtEnd (s : JP) : Bool := s.pos >= jpEnd s
 
 private def jpPeek (s : JP) : Option Char :=
   if jpAtEnd s then none
-  else some (s.input.get s.pos)
+  else some (String.Pos.Raw.get s.input s.pos)
 
 private def jpNext (s : JP) : JP :=
   if jpAtEnd s then s
-  else { s with pos := s.input.next s.pos }
+  else { s with pos := String.Pos.Raw.next s.input s.pos }
 
 private def jpSkipWS (s : JP) : JP :=
   let rec go (s : JP) (fuel : Nat) : JP :=
@@ -138,7 +138,7 @@ private def jpExpectStr (s : JP) (expected : String) : Except String JP :=
     if i >= expected.length then .ok s
     else match jpPeek s with
       | some c =>
-        if c == expected.get ⟨i⟩ then go (jpNext s) (i + 1)
+        if c == String.Pos.Raw.get expected ⟨i⟩ then go (jpNext s) (i + 1)
         else .error s!"expected '{expected}'"
       | none => .error s!"expected '{expected}', got EOF"
   go s 0

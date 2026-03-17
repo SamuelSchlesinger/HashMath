@@ -31,6 +31,21 @@ private def stringContains (haystack : String) (needle : String) : Bool :=
   if needle.isEmpty then true
   else go 0 (haystack.length + 1)
 
+/-- Validate that an expression input contains no newlines or control characters.
+    Prevents command injection via string interpolation into source code. -/
+private def validateExprInput (s : String) : Except String String :=
+  if s.any (fun c => c == '\n' || c == '\r' || c.toNat < 32) then
+    .error "input contains invalid characters"
+  else .ok s
+
+/-- Validate that a file path contains no path traversal components.
+    Rejects absolute paths and paths containing `..`. -/
+private def validatePath (path : String) : IO Unit := do
+  if stringContains path ".." then
+    throw (IO.userError "path traversal not allowed")
+  if path.startsWith "/" then
+    throw (IO.userError "absolute paths not allowed")
+
 -- ═══════════════════════════════════════════════
 -- File loading (self-contained version of processFileIO)
 -- ═══════════════════════════════════════════════
@@ -54,6 +69,8 @@ private partial def loadFileIO (cb : Codebase) (filePath : System.FilePath)
   for cmd in cmds do
     match cmd with
     | .import_ path =>
+      if stringContains path ".." || path.startsWith "/" then
+        throw (IO.userError s!"import error: path '{path}' contains disallowed components")
       let fullPath := dir / path
       let (cb', _) ← loadFileIO cb fullPath imported
       cb := cb'
@@ -181,6 +198,7 @@ private partial def handleLoadFile (state : MCPState) (args : Json) : IO (MCPSta
     return (state, .obj [("error", .str "missing 'path' argument")])
   let importedRef ← IO.mkRef state.imported
   try
+    validatePath path
     let (cb', results) ← loadFileIO state.codebase ⟨path⟩ importedRef
     let imported' ← importedRef.get
     let summary := results.map (formatResultSummary cb')
@@ -196,6 +214,9 @@ private def handleCheck (state : MCPState) (args : Json) : IO (MCPState × Json)
   let expr := args.fieldStr "expr"
   if expr.isEmpty then
     return (state, .obj [("error", .str "missing 'expr' argument")])
+  match validateExprInput expr with
+  | .error e => return (state, .obj [("error", .str e)])
+  | .ok _ => pure ()
   let source := s!"#check {expr}"
   match state.codebase.processSource source with
   | .ok (_, results) =>
@@ -210,6 +231,9 @@ private def handleEval (state : MCPState) (args : Json) : IO (MCPState × Json) 
   let expr := args.fieldStr "expr"
   if expr.isEmpty then
     return (state, .obj [("error", .str "missing 'expr' argument")])
+  match validateExprInput expr with
+  | .error e => return (state, .obj [("error", .str e)])
+  | .ok _ => pure ()
   let source := s!"#eval {expr}"
   match state.codebase.processSource source with
   | .ok (_, results) =>
@@ -224,6 +248,9 @@ private def handlePrint (state : MCPState) (args : Json) : IO (MCPState × Json)
   let name := args.fieldStr "name"
   if name.isEmpty then
     return (state, .obj [("error", .str "missing 'name' argument")])
+  match validateExprInput name with
+  | .error e => return (state, .obj [("error", .str e)])
+  | .ok _ => pure ()
   let source := s!"#print {name}"
   match state.codebase.processSource source with
   | .ok (_, results) =>
@@ -254,6 +281,7 @@ private def handleReadSource (state : MCPState) (args : Json) : IO (MCPState × 
   if path.isEmpty then
     return (state, .obj [("error", .str "missing 'path' argument")])
   try
+    validatePath path
     let content ← IO.FS.readFile ⟨path⟩
     return (state, .obj [("path", .str path), ("source", .str content)])
   catch e =>

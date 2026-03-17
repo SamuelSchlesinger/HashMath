@@ -34,24 +34,21 @@ inductive And (P : Prop) (Q : Prop) : Prop where
 -- so large elimination is allowed.
 def And.fst : ∀ (P : Prop) (Q : Prop), And P Q → P :=
   fun (P : Prop) (Q : Prop) (h : And P Q) =>
-    And.rec.{0} P Q
-      (fun (_ : And P Q) => P)
-      (fun (a : P) (_ : Q) => a)
-      h
+    match .{0} h : And P Q return P {
+      | And.intro a _ => a
+    }
 
 def And.snd : ∀ (P : Prop) (Q : Prop), And P Q → Q :=
   fun (P : Prop) (Q : Prop) (h : And P Q) =>
-    And.rec.{0} P Q
-      (fun (_ : And P Q) => Q)
-      (fun (_ : P) (b : Q) => b)
-      h
+    match .{0} h : And P Q return Q {
+      | And.intro _ b => b
+    }
 
 def And.swap : ∀ (P : Prop) (Q : Prop), And P Q → And Q P :=
   fun (P : Prop) (Q : Prop) (h : And P Q) =>
-    And.rec.{0} P Q
-      (fun (_ : And P Q) => And Q P)
-      (fun (a : P) (b : Q) => And.intro Q P b a)
-      h
+    match .{0} h : And P Q return And Q P {
+      | And.intro a b => And.intro Q P b a
+    }
 
 -----------------------------------------------------------------------
 -- Disjunction
@@ -66,11 +63,10 @@ def Or.elim : ∀ (P : Prop) (Q : Prop) (R : Prop),
     Or P Q → (P → R) → (Q → R) → R :=
   fun (P : Prop) (Q : Prop) (R : Prop)
       (h : Or P Q) (f : P → R) (g : Q → R) =>
-    Or.rec P Q
-      (fun (_ : Or P Q) => R)
-      (fun (a : P) => f a)
-      (fun (b : Q) => g b)
-      h
+    match h : Or P Q return R {
+      | Or.inl a => f a
+      | Or.inr b => g b
+    }
 
 def Or.swap : ∀ (P : Prop) (Q : Prop), Or P Q → Or Q P :=
   fun (P : Prop) (Q : Prop) (h : Or P Q) =>
@@ -107,10 +103,9 @@ def Exists.elim : ∀ (A : Type) (P : A → Prop) (Q : Prop),
     Exists A P → (∀ (w : A), P w → Q) → Q :=
   fun (A : Type) (P : A → Prop) (Q : Prop)
       (h : Exists A P) (f : ∀ (w : A), P w → Q) =>
-    Exists.rec A P
-      (fun (_ : Exists A P) => Q)
-      (fun (w : A) (pw : P w) => f w pw)
-      h
+    match h : Exists A P return Q {
+      | Exists.intro w pw => f w pw
+    }
 
 -----------------------------------------------------------------------
 -- If and only if

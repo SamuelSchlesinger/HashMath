@@ -1,0 +1,127 @@
+-- Comprehensive test of dependent pattern matching syntax
+import "../stdlib/Prelude.hm"
+
+-- Bool operations
+def Bool.not2 : Bool → Bool :=
+  fun (b : Bool) =>
+    match b : Bool return Bool {
+      | Bool.false => Bool.true
+      | Bool.true => Bool.false
+    }
+
+def Bool.and2 : Bool → Bool → Bool :=
+  fun (a : Bool) (b : Bool) =>
+    match a : Bool return Bool {
+      | Bool.false => Bool.false
+      | Bool.true => b
+    }
+
+-- Nat operations
+def Nat.pred2 : Nat → Nat :=
+  fun (n : Nat) =>
+    match n : Nat return Nat {
+      | Nat.zero => Nat.zero
+      | Nat.succ m _ => m
+    }
+
+def Nat.add2 : Nat → Nat → Nat :=
+  fun (m : Nat) (n : Nat) =>
+    match n : Nat return Nat {
+      | Nat.zero => m
+      | Nat.succ _ ih => Nat.succ ih
+    }
+
+def Nat.isZero2 : Nat → Prop :=
+  fun (n : Nat) =>
+    match n : Nat return Prop {
+      | Nat.zero => True
+      | Nat.succ _ _ => False
+    }
+
+-- List operations
+def List.length2 : ∀ (A : Type), List A → Nat :=
+  fun (A : Type) (xs : List A) =>
+    match xs : List A return Nat {
+      | List.nil => Nat.zero
+      | List.cons _ _ ih => Nat.succ ih
+    }
+
+def List.map2 : ∀ (A : Type) (B : Type), (A → B) → List A → List B :=
+  fun (A : Type) (B : Type) (f : A → B) (xs : List A) =>
+    match xs : List A return List B {
+      | List.nil => List.nil B
+      | List.cons a _ ih => List.cons B (f a) ih
+    }
+
+-- Option
+def Option.map2 : ∀ (A : Type) (B : Type), (A → B) → Option A → Option B :=
+  fun (A : Type) (B : Type) (f : A → B) (o : Option A) =>
+    match o : Option A return Option B {
+      | Option.none => Option.none B
+      | Option.some a => Option.some B (f a)
+    }
+
+-- Prod
+def Prod.fst2 : ∀ (A : Type) (B : Type), Prod A B → A :=
+  fun (A : Type) (B : Type) (p : Prod A B) =>
+    match p : Prod A B return A {
+      | Prod.mk a _ => a
+    }
+
+-- Sum
+def Sum.elim2 : ∀ (A : Type) (B : Type) (C : Type), Sum A B → (A → C) → (B → C) → C :=
+  fun (A : Type) (B : Type) (C : Type) (s : Sum A B) (f : A → C) (g : B → C) =>
+    match s : Sum A B return C {
+      | Sum.inl a => f a
+      | Sum.inr b => g b
+    }
+
+-- Dependent match (proof using as)
+def Nat.add_zero_left2 : ∀ (n : Nat), Eq Nat (Nat.add Nat.zero n) n :=
+  fun (n : Nat) =>
+    match .{0} n as x : Nat return Eq Nat (Nat.add Nat.zero x) x {
+      | Nat.zero => Eq.refl Nat Nat.zero
+      | Nat.succ n' ih =>
+        Nat.congr_succ (Nat.add Nat.zero n') n' ih
+    }
+
+-- Empty type match (0 arms)
+def Empty.elim2 : ∀ (A : Type), Empty → A :=
+  fun (A : Type) (e : Empty) =>
+    match e : Empty return A { }
+
+-- Single-constructor match
+def Unit.toNat : Unit → Nat :=
+  fun (u : Unit) =>
+    match u : Unit return Nat {
+      | Unit.unit => Nat.zero
+    }
+
+-- Nested match
+def Bool.xor2 : Bool → Bool → Bool :=
+  fun (a : Bool) (b : Bool) =>
+    match a : Bool return Bool {
+      | Bool.true =>
+        match b : Bool return Bool {
+          | Bool.true => Bool.false
+          | Bool.false => Bool.true
+        }
+      | Bool.false => b
+    }
+
+-- Match result applied as a function
+def Bool.apply : Bool → Nat → Nat → Nat :=
+  fun (b : Bool) (x : Nat) (y : Nat) =>
+    (match b : Bool return (Nat → Nat) {
+      | Bool.true => fun (n : Nat) => Nat.add n x
+      | Bool.false => fun (n : Nat) => Nat.add n y
+    }) Nat.zero
+
+-- Evals to verify computation
+#eval Nat.pred2 (Nat.succ (Nat.succ Nat.zero))
+#eval Nat.add2 (Nat.succ Nat.zero) (Nat.succ (Nat.succ Nat.zero))
+#eval List.length2 Nat (List.cons Nat Nat.zero (List.cons Nat Nat.zero (List.nil Nat)))
+#eval Bool.not2 Bool.true
+#eval Bool.and2 Bool.true Bool.false
+#eval Bool.xor2 Bool.true Bool.false
+#eval Unit.toNat Unit.unit

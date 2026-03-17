@@ -3,7 +3,7 @@
 -- =====================================================================
 --
 -- Bool is in Type, so Bool.rec can eliminate to any Sort u.
--- All operations defined via Bool.rec.
+-- All operations defined via match.
 
 -----------------------------------------------------------------------
 -- Boolean type
@@ -25,27 +25,24 @@ inductive Bool : Type where
 
 def Bool.and : Bool → Bool → Bool :=
   fun (a : Bool) (b : Bool) =>
-    Bool.rec.{1}
-      (fun (_ : Bool) => Bool)
-      Bool.false     -- false ∧ b = false
-      b              -- true  ∧ b = b
-      a
+    match a : Bool return Bool {
+      | Bool.false => Bool.false
+      | Bool.true => b
+    }
 
 def Bool.or : Bool → Bool → Bool :=
   fun (a : Bool) (b : Bool) =>
-    Bool.rec.{1}
-      (fun (_ : Bool) => Bool)
-      b              -- false ∨ b = b
-      Bool.true      -- true  ∨ b = true
-      a
+    match a : Bool return Bool {
+      | Bool.false => b
+      | Bool.true => Bool.true
+    }
 
 def Bool.not : Bool → Bool :=
   fun (b : Bool) =>
-    Bool.rec.{1}
-      (fun (_ : Bool) => Bool)
-      Bool.true      -- not false = true
-      Bool.false     -- not true  = false
-      b
+    match b : Bool return Bool {
+      | Bool.false => Bool.true
+      | Bool.true => Bool.false
+    }
 
 -----------------------------------------------------------------------
 -- If-then-else (eliminates to any Type)
@@ -53,11 +50,10 @@ def Bool.not : Bool → Bool :=
 
 def Bool.ite : ∀ (A : Type), Bool → A → A → A :=
   fun (A : Type) (b : Bool) (t : A) (f : A) =>
-    Bool.rec.{1}
-      (fun (_ : Bool) => A)
-      f              -- false branch
-      t              -- true branch
-      b
+    match b : Bool return A {
+      | Bool.false => f
+      | Bool.true => t
+    }
 
 -----------------------------------------------------------------------
 -- Decision to Bool
@@ -65,8 +61,7 @@ def Bool.ite : ∀ (A : Type), Bool → A → A → A :=
 
 def Bool.xor : Bool → Bool → Bool :=
   fun (a : Bool) (b : Bool) =>
-    Bool.rec.{1}
-      (fun (_ : Bool) => Bool)
-      b                   -- false xor b = b
-      (Bool.not b)        -- true  xor b = not b
-      a
+    match a : Bool return Bool {
+      | Bool.false => b
+      | Bool.true => Bool.not b
+    }

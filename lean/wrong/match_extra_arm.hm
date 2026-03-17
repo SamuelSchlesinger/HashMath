@@ -1,0 +1,10 @@
+-- Match with more arms than constructors (should be rejected)
+import "../stdlib/Bool.hm"
+
+def test : Bool → Prop :=
+  fun (b : Bool) =>
+    match b : Bool return Prop {
+      | Bool.true => True
+      | Bool.false => False
+      | Bool.true => True
+    }

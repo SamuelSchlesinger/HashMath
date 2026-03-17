@@ -55,8 +55,8 @@ partial def repl (cb : Codebase) : IO Unit := do
 /-- Format a single byte as two hex characters. -/
 private def byteToHex (b : UInt8) : String :=
   let hexChars := "0123456789abcdef"
-  let hi := String.singleton (hexChars.get ⟨b.toNat / 16⟩)
-  let lo := String.singleton (hexChars.get ⟨b.toNat % 16⟩)
+  let hi := String.singleton (String.Pos.Raw.get hexChars ⟨b.toNat / 16⟩)
+  let lo := String.singleton (String.Pos.Raw.get hexChars ⟨b.toNat % 16⟩)
   hi ++ lo
 
 /-- Format a Hash as a hex string. -/
@@ -75,8 +75,8 @@ def hexToHash (s : String) : Option Hash := do
   if s.length != 64 then none
   else
     let bytes ← (List.range 32).foldlM (init := ByteArray.empty) fun acc i => do
-      let hi ← hexVal (s.get ⟨i * 2⟩)
-      let lo ← hexVal (s.get ⟨i * 2 + 1⟩)
+      let hi ← hexVal (String.Pos.Raw.get s ⟨i * 2⟩)
+      let lo ← hexVal (String.Pos.Raw.get s ⟨i * 2 + 1⟩)
       return acc.push (hi * 16 + lo)
     if h : bytes.size = 32 then
       some ⟨bytes, h⟩
@@ -229,6 +229,8 @@ partial def processFileIO (cb : Codebase) (filePath : System.FilePath)
   for cmd in cmds do
     match cmd with
     | .import_ path =>
+      if path.startsWith "/" then
+        throw (IO.userError s!"import error: absolute paths not allowed in imports")
       let fullPath := dir / path
       let (cb', _) ← processFileIO cb fullPath imported
       cb := cb'

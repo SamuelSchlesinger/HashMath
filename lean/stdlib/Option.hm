@@ -20,33 +20,29 @@ inductive Option (A : Type) : Type where
 
 def Option.map : ∀ (A : Type) (B : Type), (A → B) → Option A → Option B :=
   fun (A : Type) (B : Type) (f : A → B) (o : Option A) =>
-    Option.rec.{1} A
-      (fun (_ : Option A) => Option B)
-      (Option.none B)
-      (fun (a : A) => Option.some B (f a))
-      o
+    match o : Option A return Option B {
+      | Option.none => Option.none B
+      | Option.some a => Option.some B (f a)
+    }
 
 def Option.bind : ∀ (A : Type) (B : Type),
     Option A → (A → Option B) → Option B :=
   fun (A : Type) (B : Type) (o : Option A) (f : A → Option B) =>
-    Option.rec.{1} A
-      (fun (_ : Option A) => Option B)
-      (Option.none B)
-      (fun (a : A) => f a)
-      o
+    match o : Option A return Option B {
+      | Option.none => Option.none B
+      | Option.some a => f a
+    }
 
 def Option.getD : ∀ (A : Type), Option A → A → A :=
   fun (A : Type) (o : Option A) (d : A) =>
-    Option.rec.{1} A
-      (fun (_ : Option A) => A)
-      d
-      (fun (a : A) => a)
-      o
+    match o : Option A return A {
+      | Option.none => d
+      | Option.some a => a
+    }
 
 def Option.isSome : ∀ (A : Type), Option A → Prop :=
   fun (A : Type) (o : Option A) =>
-    Option.rec.{1} A
-      (fun (_ : Option A) => Prop)
-      False
-      (fun (_ : A) => True)
-      o
+    match o : Option A return Prop {
+      | Option.none => False
+      | Option.some _ => True
+    }

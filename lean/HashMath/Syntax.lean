@@ -25,6 +25,9 @@ inductive SExpr where
   | arrow : SExpr → SExpr → SExpr               -- type → type (non-dependent)
   | letE : String → SExpr → SExpr → SExpr → SExpr  -- let name : ty := val in body
   | proj : String → Nat → SExpr → SExpr
+  | match_ (recUnivs : List SLevel) (scrutinee : SExpr) (asVars : List String)
+           (typeExpr : SExpr) (returnExpr : SExpr)
+           (armCtors : List String) (armVarss : List (List String)) (armBodies : List SExpr) : SExpr
   deriving Repr, BEq, Inhabited
 
 namespace SExpr

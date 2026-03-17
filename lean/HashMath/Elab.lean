@@ -41,63 +41,7 @@ def pushLocal (ctx : ElabContext) (name : String) : ElabContext :=
 
 end ElabContext
 
-def elabLevel (ctx : ElabContext) (l : SLevel) : Except String Level :=
-  match l with
-  | .num n => .ok (Level.nSucc n)
-  | .param name =>
-    match listIndexOf ctx.univParams name with
-    | some idx => .ok (.param idx)
-    | none => .error s!"unknown universe parameter '{name}'"
-  | .succ l => do return .succ (← elabLevel ctx l)
-  | .max l₁ l₂ => do return .max (← elabLevel ctx l₁) (← elabLevel ctx l₂)
-  | .imax l₁ l₂ => do return .imax (← elabLevel ctx l₁) (← elabLevel ctx l₂)
-
-/-- Elaborate a surface expression to a kernel expression.
-    When `irefCtx` is provided, variable references matching type names in the mutual block
-    are elaborated as `iref` references instead of constants. -/
-partial def elabExprCore (ctx : ElabContext)
-    (irefCtx : Option (List String × List Level))
-    (e : SExpr) : Except String Expr :=
-  let rec_ := elabExprCore ctx irefCtx
-  let recLocal := fun name => elabExprCore (ctx.pushLocal name) irefCtx
-  match e with
-  | .var name univArgs =>
-    -- Check local variables first (they shadow type names and constants)
-    match listIndexOf ctx.locals name with
-    | some idx => .ok (.bvar idx)
-    | none =>
-      -- Then check type names (for constructor types in inductive blocks)
-      match irefCtx.bind (fun (typeNames, univLevels) =>
-          (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
-      | some e => .ok e
-      | none =>
-        match ctx.constants[name]? with
-        | some h => do
-          let univLevels ← univArgs.mapM (elabLevel ctx)
-          .ok (.const h univLevels)
-        | none => .error s!"unknown variable '{name}'"
-  | .sort l => do return .sort (← elabLevel ctx l)
-  | .app f a => do return .app (← rec_ f) (← rec_ a)
-  | .lam name ty body => do
-    return .lam (← rec_ ty) (← recLocal name body)
-  | .pi name ty body => do
-    return .forallE (← rec_ ty) (← recLocal name body)
-  | .arrow dom cod => do
-    return .forallE (← rec_ dom) (← recLocal "_" cod)
-  | .letE name ty val body => do
-    return .letE (← rec_ ty) (← rec_ val) (← recLocal name body)
-  | .proj typeName idx struct =>
-    match ctx.constants[typeName]? with
-    | some h => do return .proj h idx (← rec_ struct)
-    | none => .error s!"unknown type '{typeName}' in projection"
-
-def elabExpr (ctx : ElabContext) (e : SExpr) : Except String Expr :=
-  elabExprCore ctx none e
-
-/-- Elaborate a constructor type, replacing references to types in the mutual block with iref. -/
-def elabCtorExpr (ctx : ElabContext) (typeNames : List String)
-    (univLevels : List Level) (e : SExpr) : Except String Expr :=
-  elabExprCore ctx (some (typeNames, univLevels)) e
+/-! ## Codebase (moved before elabExprCore so match elaboration can use it) -/
 
 inductive ElabResult where
   | declared : String → Hash → ElabResult
@@ -195,6 +139,288 @@ partial def ppExpr (cb : Codebase) (univParams : List String := [])
     s!"{typeName}.{i} {sStr}"
   | .iref idx _ls => s!"(iref {idx})"
 
+end Codebase
+
+/-! ## Match elaboration helpers -/
+
+/-- Extract the head type name and arguments from a surface type expression.
+    E.g., `List A` → `("List", [A])` -/
+private def getTypeNameAndArgs : SExpr → Option (String × List SExpr)
+  | .var name _ => some (name, [])
+  | .app f a =>
+    match getTypeNameAndArgs f with
+    | some (name, args) => some (name, args ++ [a])
+    | none => none
+  | _ => none
+
+/-- Strip `numSkip` leading forallE binders from a type, instantiating each with the
+    corresponding expression from `skipExprs`. Then extract `numExtract` forallE domain types. -/
+private def extractTelescope (ty : Expr) (numSkip : Nat) (skipExprs : List Expr)
+    (univLevels : List Level) (numExtract : Nat) : List Expr :=
+  let ty := ty.substLevelParams univLevels
+  let inner := instantiateN ty numSkip skipExprs
+  extractN inner numExtract []
+where
+  instantiateN : Expr → Nat → List Expr → Expr
+    | ty, 0, _ => ty
+    | .forallE _ body, n+1, p :: ps => instantiateN (body.instantiate p) n ps
+    | ty, _, _ => ty
+  extractN : Expr → Nat → List Expr → List Expr
+    | _, 0, acc => acc.reverse
+    | .forallE ty body, n+1, acc => extractN body n (ty :: acc)
+    | _, _, acc => acc.reverse
+
+/-- Compute IH types for recursive fields in a match minor.
+    Each recursive field gets an IH whose type is the motive applied to
+    the index args and the recursive field variable. -/
+private def computeIHTypes (motive : Expr) (nFields : Nat)
+    (fieldTypes : List Expr) (recursiveFields : List (Nat × Nat × List Expr))
+    (numParams : Nat) : List Expr :=
+  go recursiveFields 0
+where
+  go : List (Nat × Nat × List Expr) → Nat → List Expr
+    | [], _ => []
+    | (recIdx, _, _) :: rest, k =>
+      let depth := nFields + k
+      let motiveL := motive.liftN depth
+      let fieldBvar := Expr.bvar (depth - 1 - recIdx)
+      -- Get index args from the field type (for indexed types)
+      let idxArgs := match fieldTypes[recIdx]? with
+        | some ft => ft.getAppArgs.drop numParams
+        | none => []
+      let liftedIdxArgs := idxArgs.map (fun e => e.liftN (depth - recIdx))
+      let ihType := Expr.mkAppN motiveL (liftedIdxArgs ++ [fieldBvar])
+      ihType :: go rest (k + 1)
+
+/-- Find the index of a constructor name in a list. -/
+private def findArmIdx : List String → String → Option Nat
+  | [], _ => none
+  | c :: cs, name => if c == name then some 0
+    else match findArmIdx cs name with
+      | some i => some (i + 1)
+      | none => none
+
+/-- Elaborate a match expression by desugaring to a recursor application.
+    `elabRec` is the recursive elaboration function (from elabExprCore). -/
+private def elabMatchExpr
+    (elabRec : ElabContext → SExpr → Except String Expr)
+    (elabLvl : SLevel → Except String Level)
+    (ctx : ElabContext) (cb : Codebase)
+    (univs : List SLevel) (scrutinee : SExpr) (asVars : List String)
+    (typeExpr : SExpr) (returnExpr : SExpr)
+    (armCtors : List String) (armVarss : List (List String)) (armBodies : List SExpr)
+    : Except String Expr := do
+  -- 1. Extract type name and args
+  let (typeName, typeArgSExprs) ← match getTypeNameAndArgs typeExpr with
+    | some p => pure p
+    | none => .error "match: type expression must be a type name applied to arguments"
+
+  -- 2. Look up type info
+  let typeHash ← match cb.resolve typeName with
+    | some h => pure h
+    | none => .error s!"match: unknown type '{typeName}'"
+  let (block, typeIdx) ← match cb.env.getInductiveBlockForType typeHash with
+    | some info => pure info
+    | none => .error s!"match: '{typeName}' is not an inductive type"
+  let recName := typeName ++ ".rec"
+  let recHash ← match cb.resolve recName with
+    | some h => pure h
+    | none => .error s!"match: could not find recursor '{recName}'"
+  let recInfo ← match cb.env.getRecursorInfo recHash with
+    | some ri => pure ri
+    | none => .error s!"match: recursor info not found for '{recName}'"
+
+  -- 3. Check non-mutual (for now)
+  if recInfo.nMotives != 1 then
+    .error "match: mutual inductive types are not supported in match expressions"
+  else pure ()
+
+  -- 4. Elaborate type arguments and split into params/indices
+  let typeArgKExprs ← typeArgSExprs.mapM (elabRec ctx)
+  let paramExprs := typeArgKExprs.take block.numParams
+  let indexExprs := typeArgKExprs.drop block.numParams
+
+  if paramExprs.length != block.numParams then
+    .error s!"match: expected {block.numParams} type parameters for '{typeName}', got {paramExprs.length}"
+  else pure ()
+
+  -- 5. Compute universe levels for the recursor
+  let recUnivLevels ← univs.mapM elabLvl
+  -- If no explicit levels and recursor allows large elim, default to .{1}
+  let recUnivLevels :=
+    if recUnivLevels.isEmpty && recInfo.allowsLargeElim then
+      [Level.succ Level.zero]
+    else recUnivLevels
+  let blockUnivLevels := recUnivLevels.take block.numUnivParams
+
+  -- 6. Elaborate scrutinee
+  let scrutineeK ← elabRec ctx scrutinee
+
+  -- 7. Build motive
+  let nIndices := recInfo.nIndices
+  let indTy ← match block.types[typeIdx]? with
+    | some ty => pure ty
+    | none => .error "match: type index out of range"
+
+  -- Get index types from the inductive type's type
+  let indexTypes := extractTelescope indTy.type block.numParams paramExprs blockUnivLevels nIndices
+
+  -- Build motive binder names: asVars padded with "_" to nIndices + 1
+  let motiveBinderCount := nIndices + 1
+  let motiveNames := asVars ++ (List.range (motiveBinderCount - asVars.length)).map (fun _ => "_")
+  let motiveNames := motiveNames.take motiveBinderCount
+
+  -- Push motive binder names onto context and elaborate return type
+  let motiveCtx := motiveNames.foldl (fun c name => c.pushLocal name) ctx
+  let returnK ← elabRec motiveCtx returnExpr
+
+  -- Build major premise type at depth nIndices
+  let typeConst := Expr.const typeHash blockUnivLevels
+  let liftedParams := paramExprs.map (fun p => p.liftN nIndices)
+  let indexBvars := (List.range nIndices).reverse.map (fun i => Expr.bvar i)
+  let majorType := Expr.mkAppN typeConst (liftedParams ++ indexBvars)
+
+  -- Build motive: fun (i0 : I0) ... (iK : IK) (x : T params i0...iK) => Return
+  let motiveInner := Expr.lam majorType returnK
+  let motive := indexTypes.foldr (fun idxTy acc => Expr.lam idxTy acc) motiveInner
+
+  -- 8. Build minors (one per constructor, ordered by cIdx)
+  let nCtors := indTy.ctors.length
+  if armCtors.length != nCtors then
+    .error s!"match: expected {nCtors} arms for type '{typeName}', got {armCtors.length}"
+  else pure ()
+  let minors ← buildMinors elabRec ctx cb block recInfo typeIdx motive paramExprs blockUnivLevels
+      armCtors armVarss armBodies nCtors 0 []
+
+  -- 9. Assemble recursor call: rec.{u} params motive minors indices scrutinee
+  let recConst := Expr.const recHash recUnivLevels
+  let result := Expr.mkAppN recConst (paramExprs ++ [motive] ++ minors ++ indexExprs ++ [scrutineeK])
+  pure result
+where
+  buildMinors (elabRec : ElabContext → SExpr → Except String Expr)
+      (ctx : ElabContext) (cb : Codebase) (block : InductiveBlock)
+      (recInfo : RecursorInfo) (typeIdx : Nat) (motive : Expr)
+      (paramExprs : List Expr) (blockUnivLevels : List Level)
+      (armCtors : List String) (armVarss : List (List String)) (armBodies : List SExpr)
+      (nCtors : Nat) (ctorIdx : Nat) (acc : List Expr) : Except String (List Expr) :=
+    if ctorIdx >= nCtors then pure acc
+    else do
+      let ctorHash := hashCtor recInfo.blockHash typeIdx ctorIdx
+      let ctorInfo ← match cb.env.getConstructorInfo ctorHash with
+        | some ci => pure ci
+        | none => .error s!"match: constructor info not found (index {ctorIdx})"
+      let ctorName ← match cb.hashToName[ctorHash]? with
+        | some n => pure n
+        | none => .error s!"match: could not find name for constructor at index {ctorIdx}"
+
+      -- Find matching arm
+      let armIdx ← match findArmIdx armCtors ctorName with
+        | some i => pure i
+        | none => .error s!"match: missing arm for constructor '{ctorName}'"
+      let armVars ← match armVarss[armIdx]? with
+        | some v => pure v
+        | none => .error "match: internal error (arm vars)"
+      let armBody ← match armBodies[armIdx]? with
+        | some b => pure b
+        | none => .error "match: internal error (arm body)"
+
+      let nFields := ctorInfo.nFields
+      let nRecFields := ctorInfo.recursiveFields.length
+      let expectedVars := nFields + nRecFields
+      if armVars.length != expectedVars then
+        .error s!"match: constructor '{ctorName}' expects {expectedVars} variables ({nFields} fields + {nRecFields} IHs), got {armVars.length}"
+      else pure ()
+
+      -- Compute field types from constructor type
+      let fieldTypes := extractTelescope ctorInfo.ty block.numParams paramExprs blockUnivLevels nFields
+
+      -- Elaborate arm body with all vars in scope
+      let armCtx := armVars.foldl (fun c name => c.pushLocal name) ctx
+      let minorBody ← elabRec armCtx armBody
+
+      -- Compute IH types
+      let ihTypes := computeIHTypes motive nFields fieldTypes ctorInfo.recursiveFields block.numParams
+
+      -- Wrap body with IH lambdas (innermost), then field lambdas (outermost)
+      let minor := ihTypes.foldr (fun ihTy acc => Expr.lam ihTy acc) minorBody
+      let minor := fieldTypes.foldr (fun fTy acc => Expr.lam fTy acc) minor
+
+      buildMinors elabRec ctx cb block recInfo typeIdx motive paramExprs blockUnivLevels
+          armCtors armVarss armBodies nCtors (ctorIdx + 1) (acc ++ [minor])
+
+/-! ## Expression elaboration -/
+
+def elabLevel (ctx : ElabContext) (l : SLevel) : Except String Level :=
+  match l with
+  | .num n => .ok (Level.nSucc n)
+  | .param name =>
+    match listIndexOf ctx.univParams name with
+    | some idx => .ok (.param idx)
+    | none => .error s!"unknown universe parameter '{name}'"
+  | .succ l => do return .succ (← elabLevel ctx l)
+  | .max l₁ l₂ => do return .max (← elabLevel ctx l₁) (← elabLevel ctx l₂)
+  | .imax l₁ l₂ => do return .imax (← elabLevel ctx l₁) (← elabLevel ctx l₂)
+
+/-- Elaborate a surface expression to a kernel expression.
+    When `irefCtx` is provided, variable references matching type names in the mutual block
+    are elaborated as `iref` references instead of constants.
+    When `cb` is provided, `match` expressions are supported. -/
+partial def elabExprCore (ctx : ElabContext)
+    (irefCtx : Option (List String × List Level))
+    (cb : Option Codebase := none)
+    (e : SExpr) : Except String Expr :=
+  let rec_ := elabExprCore ctx irefCtx cb
+  let recLocal := fun name => elabExprCore (ctx.pushLocal name) irefCtx cb
+  match e with
+  | .var name univArgs =>
+    -- Check local variables first (they shadow type names and constants)
+    match listIndexOf ctx.locals name with
+    | some idx => .ok (.bvar idx)
+    | none =>
+      -- Then check type names (for constructor types in inductive blocks)
+      match irefCtx.bind (fun (typeNames, univLevels) =>
+          (listIndexOf typeNames name).map (fun idx => Expr.iref idx univLevels)) with
+      | some e => .ok e
+      | none =>
+        match ctx.constants[name]? with
+        | some h => do
+          let univLevels ← univArgs.mapM (elabLevel ctx)
+          .ok (.const h univLevels)
+        | none => .error s!"unknown variable '{name}'"
+  | .sort l => do return .sort (← elabLevel ctx l)
+  | .app f a => do return .app (← rec_ f) (← rec_ a)
+  | .lam name ty body => do
+    return .lam (← rec_ ty) (← recLocal name body)
+  | .pi name ty body => do
+    return .forallE (← rec_ ty) (← recLocal name body)
+  | .arrow dom cod => do
+    return .forallE (← rec_ dom) (← recLocal "_" cod)
+  | .letE name ty val body => do
+    return .letE (← rec_ ty) (← rec_ val) (← recLocal name body)
+  | .proj typeName idx struct =>
+    match ctx.constants[typeName]? with
+    | some h => do return .proj h idx (← rec_ struct)
+    | none => .error s!"unknown type '{typeName}' in projection"
+  | .match_ univs scrut asVars typeE retE armCtors armVarss armBodies =>
+    match cb with
+    | none => .error "match expressions require codebase context"
+    | some codebase =>
+      let elabRec := fun ctx' e => elabExprCore ctx' irefCtx cb e
+      let elabLvl := elabLevel ctx
+      elabMatchExpr elabRec elabLvl ctx codebase univs scrut asVars typeE retE armCtors armVarss armBodies
+
+def elabExpr (ctx : ElabContext) (e : SExpr) (cb : Option Codebase := none) : Except String Expr :=
+  elabExprCore ctx none cb e
+
+/-- Elaborate a constructor type, replacing references to types in the mutual block with iref. -/
+def elabCtorExpr (ctx : ElabContext) (typeNames : List String)
+    (univLevels : List Level) (e : SExpr) (cb : Option Codebase := none) : Except String Expr :=
+  elabExprCore ctx (some (typeNames, univLevels)) cb e
+
+/-! ## Inductive type elaboration and command processing -/
+
+namespace Codebase
+
 /-- Elaborate one inductive type from surface syntax. -/
 private def elabOneInductiveType (ctx : ElabContext) (univParams : List String)
     (typeNames : List String)
@@ -254,7 +480,7 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
   match cmd with
   | .decl (.axiom_ name univParams ty) =>
     let ctx := cb.toElabCtx univParams
-    let ty' ← elabExpr ctx ty
+    let ty' ← elabExpr ctx ty (some cb)
     let decl := Decl.axiom univParams.length ty'
     let (h, env') ← checkDecl cb.env decl
     let cb' := { cb with env := env' }.registerName name h
@@ -262,8 +488,8 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
 
   | .decl (.def_ name univParams ty val) =>
     let ctx := cb.toElabCtx univParams
-    let ty' ← elabExpr ctx ty
-    let val' ← elabExpr ctx val
+    let ty' ← elabExpr ctx ty (some cb)
+    let val' ← elabExpr ctx val (some cb)
     let decl := Decl.definition univParams.length ty' val'
     let (h, env') ← checkDecl cb.env decl
     let cb' := { cb with env := env' }.registerName name h
@@ -285,13 +511,13 @@ def processCommand (cb : Codebase) (cmd : Command) : Except String (Codebase × 
 
   | .check e =>
     let ctx := cb.toElabCtx
-    let e' ← elabExpr ctx e
+    let e' ← elabExpr ctx e (some cb)
     let ty ← inferTypeClosed cb.env e'
     return (cb, .checked e' ty)
 
   | .eval e =>
     let ctx := cb.toElabCtx
-    let e' ← elabExpr ctx e
+    let e' ← elabExpr ctx e (some cb)
     let result := normalize cb.env e'
     return (cb, .evaluated e' result)
 

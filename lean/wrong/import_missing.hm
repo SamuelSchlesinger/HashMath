@@ -1,0 +1,2 @@
+-- Import of non-existent file (should be rejected)
+import "nonexistent_file.hm"

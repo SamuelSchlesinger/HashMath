@@ -1,0 +1,9 @@
+-- Match arm with non-existent constructor name (should be rejected)
+import "../stdlib/Bool.hm"
+
+def test : Bool → Bool :=
+  fun (b : Bool) =>
+    match b : Bool return Bool {
+      | Bool.true => Bool.false
+      | Bool.nope => Bool.true
+    }
