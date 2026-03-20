@@ -6,7 +6,8 @@
 > proof-of-concept implementation. The CIC variant used here has not been
 > formally validated and may be unsound. It should not be relied upon for
 > correctness-critical applications. The design and implementation may change
-> significantly.
+> significantly. We _believe_ it is not able to prove False, but it has known
+> completeness issues.
 
 ## What is this?
 
